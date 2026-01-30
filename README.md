@@ -15,8 +15,8 @@ This repository provides:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   AUDITOR AGENT                          │
-│            (Snowflake Intelligence)                      │
+│                   AUDITOR AGENT                         │
+│            (Snowflake Intelligence)                     │
 ├─────────────────────────────────────────────────────────┤
 │  ┌──────────────────┐    ┌──────────────────────────┐   │
 │  │  Cortex Analyst  │    │     Cortex Search        │   │
@@ -24,9 +24,9 @@ This repository provides:
 │  │  - Access history│    │  - Policy documents      │   │
 │  │  - User patterns │    │  - Audit notes           │   │
 │  └────────┬─────────┘    └────────────┬─────────────┘   │
-│           ▼                           ▼                  │
+│           ▼                           ▼                 │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │            AUDIT DATA SOURCES                    │    │
+│  │            AUDIT DATA SOURCES                   │    │
 │  │  • SNOWFLAKE.LOCAL.AI_OBSERVABILITY_EVENTS      │    │
 │  │  • SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY        │    │
 │  │  • SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY       │    │
