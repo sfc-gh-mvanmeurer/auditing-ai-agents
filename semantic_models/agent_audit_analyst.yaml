@@ -1,0 +1,322 @@
+# Agent Audit Analyst Semantic Model
+# For use with Cortex Analyst to enable natural language queries over audit data
+#
+# Upload to Snowflake:
+#   PUT file://agent_audit_analyst.yaml @AGENT_AUDIT.CORTEX.SEMANTIC_MODELS AUTO_COMPRESS=FALSE;
+
+name: agent_audit_analyst
+description: |
+  Analyzes Cortex Agent behavior, user activity, data access patterns, and 
+  compliance metrics. Use for quantitative audit questions about agent operations.
+  
+  Example questions:
+  - "How many conversations did each agent have last week?"
+  - "What's the positive feedback rate by agent?"
+  - "Which users have the highest failure rates?"
+  - "Show me data access trends over the past month"
+
+tables:
+  # ===========================================================================
+  # AGENT ACTIVITY METRICS
+  # ===========================================================================
+  - name: AGENT_EVENTS
+    description: |
+      Flattened view of Cortex Agent events including conversations, tool usage,
+      and user feedback. Use for agent-level activity analysis.
+    base_table: 
+      database: AGENT_AUDIT
+      schema: OBSERVABILITY
+      table: AGENT_EVENTS_FLATTENED
+    
+    dimensions:
+      - name: AGENT_NAME
+        description: Name of the Cortex Agent
+        expr: AGENT_NAME
+        sample_values: ['FRAUD_INVESTIGATION_ASSISTANT', 'CUSTOMER_SERVICE_AGENT']
+      
+      - name: USER_NAME
+        description: User who interacted with the agent
+        expr: USER_NAME
+      
+      - name: EVENT_TYPE
+        description: Type of agent event (RESPONSE, FEEDBACK, TOOL_EXECUTION)
+        expr: EVENT_TYPE
+        sample_values: ['CORTEX_AGENT_RESPONSE', 'CORTEX_AGENT_FEEDBACK', 'CORTEX_AGENT_TOOL_EXECUTION']
+      
+      - name: TOOL_USED
+        description: Which tool was invoked (CORTEX_ANALYST, CORTEX_SEARCH, WEB_SEARCH)
+        expr: TOOL_USED
+        sample_values: ['cortex_analyst', 'cortex_search', 'web_search']
+      
+      - name: FEEDBACK_SENTIMENT
+        description: User feedback sentiment (POSITIVE, NEGATIVE, or null)
+        expr: FEEDBACK_SENTIMENT
+        sample_values: ['POSITIVE', 'NEGATIVE']
+      
+      - name: THREAD_ID
+        description: Unique identifier for a conversation thread
+        expr: THREAD_ID
+      
+      - name: EVENT_DATE
+        description: Date of the event
+        expr: EVENT_DATE
+      
+      - name: EVENT_HOUR
+        description: Hour of day when event occurred (0-23)
+        expr: EVENT_HOUR
+    
+    time_dimensions:
+      - name: EVENT_TIMESTAMP
+        description: Timestamp of the event
+        expr: EVENT_TIMESTAMP
+    
+    measures:
+      - name: TOTAL_EVENTS
+        description: Count of all agent events
+        expr: COUNT(*)
+      
+      - name: TOTAL_CONVERSATIONS
+        description: Count of unique conversation threads
+        expr: COUNT(DISTINCT THREAD_ID)
+      
+      - name: UNIQUE_USERS
+        description: Count of distinct users
+        expr: COUNT(DISTINCT USER_NAME)
+      
+      - name: POSITIVE_FEEDBACK_COUNT
+        description: Number of positive feedback events
+        expr: SUM(CASE WHEN FEEDBACK_SENTIMENT = 'POSITIVE' THEN 1 ELSE 0 END)
+      
+      - name: NEGATIVE_FEEDBACK_COUNT
+        description: Number of negative feedback events
+        expr: SUM(CASE WHEN FEEDBACK_SENTIMENT = 'NEGATIVE' THEN 1 ELSE 0 END)
+      
+      - name: TOTAL_FEEDBACK
+        description: Total feedback events (positive + negative)
+        expr: SUM(CASE WHEN FEEDBACK_SENTIMENT IS NOT NULL THEN 1 ELSE 0 END)
+      
+      - name: POSITIVE_FEEDBACK_RATE
+        description: Percentage of feedback that is positive
+        expr: |
+          ROUND(
+            SUM(CASE WHEN FEEDBACK_SENTIMENT = 'POSITIVE' THEN 1 ELSE 0 END) * 100.0 / 
+            NULLIF(SUM(CASE WHEN FEEDBACK_SENTIMENT IS NOT NULL THEN 1 ELSE 0 END), 0),
+            2
+          )
+      
+      - name: AVG_RESPONSE_TIME_MS
+        description: Average response time in milliseconds
+        expr: AVG(SPAN_DURATION_MS)
+      
+      - name: TOOL_INVOCATIONS
+        description: Number of tool calls made by agents
+        expr: SUM(CASE WHEN EVENT_TYPE LIKE '%TOOL%' THEN 1 ELSE 0 END)
+
+  # ===========================================================================
+  # FAILED QUERIES
+  # ===========================================================================
+  - name: FAILED_QUERIES
+    description: |
+      Analysis of failed queries including error categorization.
+      Use for security monitoring and troubleshooting.
+    base_table:
+      database: AGENT_AUDIT
+      schema: OBSERVABILITY
+      table: FAILED_QUERIES_ANALYSIS
+    
+    dimensions:
+      - name: USER_NAME
+        description: User who ran the failed query
+        expr: USER_NAME
+      
+      - name: ROLE_NAME
+        description: Role used for the query
+        expr: ROLE_NAME
+      
+      - name: ERROR_CATEGORY
+        description: Categorized error type
+        expr: ERROR_CATEGORY
+        sample_values: ['PERMISSION_DENIED', 'OBJECT_NOT_FOUND', 'SYNTAX_ERROR', 'TIMEOUT', 'OTHER']
+      
+      - name: ERROR_CODE
+        description: Snowflake error code
+        expr: ERROR_CODE
+      
+      - name: FAILURE_DATE
+        description: Date of the failure
+        expr: FAILURE_DATE
+      
+      - name: FAILURE_HOUR
+        description: Hour of day when failure occurred
+        expr: FAILURE_HOUR
+    
+    measures:
+      - name: FAILURE_COUNT
+        description: Number of failed queries
+        expr: COUNT(*)
+      
+      - name: UNIQUE_USERS_WITH_FAILURES
+        description: Distinct users experiencing failures
+        expr: COUNT(DISTINCT USER_NAME)
+      
+      - name: PERMISSION_DENIED_COUNT
+        description: Number of permission denied errors
+        expr: SUM(CASE WHEN ERROR_CATEGORY = 'PERMISSION_DENIED' THEN 1 ELSE 0 END)
+
+  # ===========================================================================
+  # USER ACTIVITY
+  # ===========================================================================
+  - name: USER_ACTIVITY
+    description: |
+      Daily user activity summary including query counts, failure rates,
+      and resource usage. Use for user behavior analysis.
+    base_table:
+      database: AGENT_AUDIT
+      schema: OBSERVABILITY
+      table: USER_ACTIVITY_SUMMARY
+    
+    dimensions:
+      - name: USER_NAME
+        description: User identifier
+        expr: USER_NAME
+      
+      - name: ACTIVITY_DATE
+        description: Date of activity
+        expr: ACTIVITY_DATE
+    
+    measures:
+      - name: TOTAL_QUERIES
+        description: Total queries executed
+        expr: SUM(TOTAL_QUERIES)
+      
+      - name: SUCCESSFUL_QUERIES
+        description: Successfully completed queries
+        expr: SUM(SUCCESSFUL_QUERIES)
+      
+      - name: FAILED_QUERIES
+        description: Failed queries
+        expr: SUM(FAILED_QUERIES)
+      
+      - name: FAILURE_RATE_PCT
+        description: Percentage of queries that failed
+        expr: ROUND(SUM(FAILED_QUERIES) * 100.0 / NULLIF(SUM(TOTAL_QUERIES), 0), 2)
+      
+      - name: TOTAL_ROWS_PRODUCED
+        description: Total rows returned from queries
+        expr: SUM(TOTAL_ROWS_PRODUCED)
+      
+      - name: TOTAL_BYTES_SCANNED
+        description: Total bytes scanned by queries
+        expr: SUM(TOTAL_BYTES_SCANNED)
+      
+      - name: ACTIVE_USERS
+        description: Count of users with activity
+        expr: COUNT(DISTINCT USER_NAME)
+      
+      - name: ACTIVE_DAYS
+        description: Count of days with activity
+        expr: COUNT(DISTINCT ACTIVITY_DATE)
+
+  # ===========================================================================
+  # DATA ACCESS LINEAGE
+  # ===========================================================================
+  - name: DATA_ACCESS
+    description: |
+      Data access patterns showing which tables were accessed.
+      Use for data lineage and access auditing.
+    base_table:
+      database: AGENT_AUDIT
+      schema: OBSERVABILITY
+      table: DATA_ACCESS_LINEAGE
+    
+    dimensions:
+      - name: USER_NAME
+        description: User who accessed the data
+        expr: USER_NAME
+      
+      - name: ROLE_NAME
+        description: Role used for access
+        expr: ROLE_NAME
+      
+      - name: SOURCE_TABLE
+        description: Fully qualified table name accessed
+        expr: SOURCE_TABLE
+      
+      - name: SOURCE_TYPE
+        description: Type of object (TABLE, VIEW)
+        expr: SOURCE_TYPE
+    
+    time_dimensions:
+      - name: ACCESS_TIME
+        description: Timestamp of data access
+        expr: ACCESS_TIME
+    
+    measures:
+      - name: ACCESS_COUNT
+        description: Number of access events
+        expr: COUNT(*)
+      
+      - name: UNIQUE_TABLES_ACCESSED
+        description: Distinct tables accessed
+        expr: COUNT(DISTINCT SOURCE_TABLE)
+      
+      - name: UNIQUE_USERS
+        description: Distinct users accessing data
+        expr: COUNT(DISTINCT USER_NAME)
+      
+      - name: TOTAL_ROWS_RETURNED
+        description: Total rows returned from queries
+        expr: SUM(ROWS_PRODUCED)
+      
+      - name: TOTAL_BYTES_SCANNED
+        description: Total bytes scanned
+        expr: SUM(BYTES_SCANNED)
+
+# ===========================================================================
+# VERIFIED QUERIES (Examples that work correctly)
+# ===========================================================================
+verified_queries:
+  - question: "How many conversations did each agent have last week?"
+    sql: |
+      SELECT AGENT_NAME, COUNT(DISTINCT THREAD_ID) as conversations
+      FROM AGENT_AUDIT.OBSERVABILITY.AGENT_EVENTS_FLATTENED
+      WHERE EVENT_DATE >= DATEADD('day', -7, CURRENT_DATE())
+      GROUP BY AGENT_NAME
+      ORDER BY conversations DESC
+    
+  - question: "What is the positive feedback rate for each agent?"
+    sql: |
+      SELECT 
+        AGENT_NAME,
+        SUM(CASE WHEN FEEDBACK_SENTIMENT = 'POSITIVE' THEN 1 ELSE 0 END) as positive,
+        SUM(CASE WHEN FEEDBACK_SENTIMENT IS NOT NULL THEN 1 ELSE 0 END) as total,
+        ROUND(positive * 100.0 / NULLIF(total, 0), 2) as positive_rate_pct
+      FROM AGENT_AUDIT.OBSERVABILITY.AGENT_EVENTS_FLATTENED
+      GROUP BY AGENT_NAME
+      ORDER BY positive_rate_pct ASC
+    
+  - question: "Which users have the highest failure rates?"
+    sql: |
+      SELECT 
+        USER_NAME,
+        SUM(TOTAL_QUERIES) as queries,
+        SUM(FAILED_QUERIES) as failures,
+        ROUND(SUM(FAILED_QUERIES) * 100.0 / NULLIF(SUM(TOTAL_QUERIES), 0), 2) as failure_rate
+      FROM AGENT_AUDIT.OBSERVABILITY.USER_ACTIVITY_SUMMARY
+      WHERE ACTIVITY_DATE >= DATEADD('day', -30, CURRENT_DATE())
+      GROUP BY USER_NAME
+      HAVING queries >= 10
+      ORDER BY failure_rate DESC
+      LIMIT 10
+    
+  - question: "Show me the most accessed tables"
+    sql: |
+      SELECT 
+        SOURCE_TABLE,
+        COUNT(*) as access_count,
+        COUNT(DISTINCT USER_NAME) as unique_users
+      FROM AGENT_AUDIT.OBSERVABILITY.DATA_ACCESS_LINEAGE
+      WHERE ACCESS_TIME >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+      GROUP BY SOURCE_TABLE
+      ORDER BY access_count DESC
+      LIMIT 20
