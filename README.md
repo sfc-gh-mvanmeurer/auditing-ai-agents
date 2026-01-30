@@ -132,13 +132,6 @@ The `agent_audit_analyst.yaml` semantic model enables natural language queries o
 - [ACCESS_HISTORY View](https://docs.snowflake.com/en/sql-reference/account-usage/access_history)
 - [QUERY_HISTORY View](https://docs.snowflake.com/en/sql-reference/account-usage/query_history)
 
-## Related Resources
-
-This repository accompanies a 3-part Medium article series on auditing AI agents:
-- Part 1: Foundation Queries
-- Part 2: LLM-as-a-Judge Evaluation Pipelines
-- Part 3: Automating with the Auditor Agent
-
 ## License
 
 MIT
