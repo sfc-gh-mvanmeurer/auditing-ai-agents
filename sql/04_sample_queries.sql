@@ -1,33 +1,9 @@
 /*
-================================================================================
-AUDITING AI AGENTS IN SNOWFLAKE
-Script 04: Sample Audit Queries
-================================================================================
+AUDITING AI AGENTS IN SNOWFLAKE - Script 04: Sample Queries
+Ready-to-run audit queries. Requires: Run 00, 01 first
 
-Ready-to-run queries for common audit scenarios. Use these as templates
-for your audit investigations.
-
-Prerequisites:
-- Run scripts 00, 01 first
-- Have some agent activity in AI_OBSERVABILITY_EVENTS
-- Have some Cortex Analyst activity in CORTEX_ANALYST_REQUESTS_RAW
-
-================================================================================
-SECTIONS:
-  A - Agent Activity Overview
-  B - User Feedback Analysis
-  C - Security Analysis
-  D - Data Access Lineage
-  E - User Behavior Analysis
-  F - Cortex Function Usage
-  F2 - Cortex Analyst Overview
-  F3 - Cortex Analyst Performance
-  F4 - Verified Query Analysis
-  F5 - Cortex Search Usage (within Analyst)
-  F6 - Agent + Analyst Correlation
-  G - Compliance Reporting
-  H - Investigation Templates
-================================================================================
+SECTIONS: A-Activity, B-Feedback, C-Security, D-Lineage, E-Users, 
+          F-Cortex, G-Compliance, H-Investigation Templates
 */
 
 USE ROLE AGENT_AUDIT_VIEWER;  -- Or AGENT_AUDIT_ADMIN
@@ -35,9 +11,7 @@ USE DATABASE AGENT_AUDIT;
 USE SCHEMA OBSERVABILITY;
 USE WAREHOUSE AUDIT_WH;
 
---------------------------------------------------------------------------------
--- SECTION A: AGENT ACTIVITY OVERVIEW
---------------------------------------------------------------------------------
+-- SECTION A: AGENT ACTIVITY
 
 -- A1. Daily agent conversation counts (last 30 days)
 SELECT 
@@ -75,9 +49,7 @@ WHERE EVENT_DATE >= DATEADD('day', -30, CURRENT_DATE())
 GROUP BY AGENT_NAME
 ORDER BY avg_response_ms DESC;
 
---------------------------------------------------------------------------------
--- SECTION B: USER FEEDBACK ANALYSIS
---------------------------------------------------------------------------------
+-- SECTION B: FEEDBACK ANALYSIS
 
 -- B1. Overall feedback rates by agent
 SELECT 
@@ -124,9 +96,7 @@ WHERE FEEDBACK_SENTIMENT = 'NEGATIVE'
 ORDER BY EVENT_TIMESTAMP DESC
 LIMIT 20;
 
---------------------------------------------------------------------------------
--- SECTION C: SECURITY ANALYSIS
---------------------------------------------------------------------------------
+-- SECTION C: SECURITY
 
 -- C1. Failed queries by error category
 SELECT 
@@ -179,9 +149,7 @@ GROUP BY user_name, DATE(start_time), HOUR(start_time)
 HAVING query_count > 5
 ORDER BY activity_date DESC, query_count DESC;
 
---------------------------------------------------------------------------------
--- SECTION D: DATA ACCESS LINEAGE
---------------------------------------------------------------------------------
+-- SECTION D: DATA LINEAGE
 
 -- D1. Most frequently accessed tables
 SELECT 
@@ -223,9 +191,7 @@ WHERE source_table ILIKE '%YOUR_TABLE%'  -- Adjust
 GROUP BY source_table, f.value::STRING
 ORDER BY access_count DESC;
 
---------------------------------------------------------------------------------
--- SECTION E: USER BEHAVIOR ANALYSIS
---------------------------------------------------------------------------------
+-- SECTION E: USER BEHAVIOR
 
 -- E1. User activity summary
 SELECT 
@@ -269,9 +235,7 @@ WHERE start_time >= DATEADD('day', -30, CURRENT_TIMESTAMP())
 GROUP BY role_name
 ORDER BY total_queries DESC;
 
---------------------------------------------------------------------------------
--- SECTION F: CORTEX FUNCTION USAGE
---------------------------------------------------------------------------------
+-- SECTION F: CORTEX USAGE
 
 -- F1. Cortex function usage by type
 SELECT 
@@ -296,9 +260,7 @@ WHERE CORTEX_FUNCTION_USED IS NOT NULL
 GROUP BY DATE(start_time), CORTEX_FUNCTION_USED
 ORDER BY usage_date DESC, calls DESC;
 
---------------------------------------------------------------------------------
--- SECTION F2: CORTEX ANALYST OVERVIEW
---------------------------------------------------------------------------------
+-- SECTION F2: CORTEX ANALYST
 
 -- F2.1. Cortex Analyst usage by semantic model (last 30 days)
 SELECT 
@@ -357,9 +319,7 @@ WHERE REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
 ORDER BY REQUEST_TIMESTAMP DESC
 LIMIT 50;
 
---------------------------------------------------------------------------------
--- SECTION F3: CORTEX ANALYST PERFORMANCE
---------------------------------------------------------------------------------
+-- SECTION F3: ANALYST PERFORMANCE
 
 -- F3.1. Response time percentiles by semantic model
 SELECT 
@@ -427,9 +387,7 @@ WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
 GROUP BY LLM_MODEL_USED
 ORDER BY request_count DESC;
 
---------------------------------------------------------------------------------
--- SECTION F4: VERIFIED QUERY ANALYSIS
---------------------------------------------------------------------------------
+-- SECTION F4: VERIFIED QUERIES
 
 -- F4.1. Most frequently matched verified queries
 SELECT 
@@ -484,9 +442,7 @@ WHERE USED_VERIFIED_QUERY = TRUE
 GROUP BY VERIFIED_QUERY_BY, VERIFIED_QUERY_NAME
 ORDER BY total_matches DESC;
 
---------------------------------------------------------------------------------
--- SECTION F5: CORTEX SEARCH USAGE WITHIN ANALYST
---------------------------------------------------------------------------------
+-- SECTION F5: SEARCH IN ANALYST
 
 -- F5.1. Cortex Search services called by Cortex Analyst
 SELECT 
@@ -524,9 +480,7 @@ GROUP BY USER_QUESTION
 ORDER BY times_triggered_search DESC
 LIMIT 20;
 
---------------------------------------------------------------------------------
--- SECTION F6: AGENT + ANALYST CORRELATION
---------------------------------------------------------------------------------
+-- SECTION F6: AGENT-ANALYST CORRELATION
 
 -- F6.1. Agents using Cortex Analyst as a tool
 SELECT 
@@ -569,9 +523,7 @@ WHERE ae.EVENT_DATE >= DATEADD('day', -30, CURRENT_DATE())
 GROUP BY ae.AGENT_NAME, ae.SPAN_NAME
 ORDER BY ae.AGENT_NAME, usage_count DESC;
 
---------------------------------------------------------------------------------
--- SECTION G: COMPLIANCE REPORTING QUERIES
---------------------------------------------------------------------------------
+-- SECTION G: COMPLIANCE REPORTING
 
 -- G1. Monthly audit summary - Cortex Agents
 SELECT 
@@ -651,9 +603,7 @@ GROUP BY DATE_TRUNC('week', REQUEST_DATE)
 
 ORDER BY report_week DESC, ai_service;
 
---------------------------------------------------------------------------------
 -- SECTION H: INVESTIGATION TEMPLATES
---------------------------------------------------------------------------------
 
 -- H1. Investigate a specific user
 -- Replace 'TARGET_USER' with the username to investigate
@@ -766,17 +716,4 @@ WHERE REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
 ORDER BY REQUEST_TIMESTAMP DESC;
 */
 
---------------------------------------------------------------------------------
--- EXPORT TEMPLATES
---------------------------------------------------------------------------------
-
--- Export audit data for external review
-/*
-COPY INTO @my_stage/audit_export/
-FROM (
-    SELECT * FROM USER_ACTIVITY_SUMMARY
-    WHERE activity_date >= DATEADD('month', -1, CURRENT_DATE())
-)
-FILE_FORMAT = (TYPE = CSV HEADER = TRUE)
-OVERWRITE = TRUE;
-*/
+-- EXPORT: COPY INTO @my_stage/audit_export/ FROM (...) FILE_FORMAT = (TYPE = CSV HEADER = TRUE);

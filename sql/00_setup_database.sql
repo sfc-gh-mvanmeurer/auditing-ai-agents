@@ -1,22 +1,7 @@
 /*
-================================================================================
-AUDITING AI AGENTS IN SNOWFLAKE
-Script 00: Database and Role Setup
-================================================================================
-
-This script creates the foundational infrastructure for AI agent auditing:
-- AGENT_AUDIT database and schemas
-- Roles with appropriate permissions
-- Grants for accessing observability data
-
-Prerequisites:
-- ACCOUNTADMIN role
-- Cortex features enabled on your account
-
-Usage:
-  snowsql -f 00_setup_database.sql
-
-================================================================================
+AUDITING AI AGENTS IN SNOWFLAKE - Script 00: Setup
+Creates: AGENT_AUDIT database, schemas, roles, and grants.
+Requires: ACCOUNTADMIN role
 */
 
 -- Use ACCOUNTADMIN for initial setup
@@ -192,14 +177,4 @@ WHERE NAME IN ('AGENT_AUDIT_VIEWER', 'AGENT_AUDIT_ADMIN')
 SELECT 'Policies loaded' as status, COUNT(*) as policy_count
 FROM AGENT_AUDIT.REFERENCE.COMPLIANCE_POLICIES;
 
---------------------------------------------------------------------------------
--- NEXT STEPS
---------------------------------------------------------------------------------
-/*
-1. Run 01_create_audit_views.sql to create views over observability data
-2. Grant MONITOR on your specific agents (see section 7)
-3. Assign AGENT_AUDIT_VIEWER role to your auditors:
-   
-   GRANT ROLE AGENT_AUDIT_VIEWER TO USER your_auditor_username;
-
-*/
+-- NEXT: Run 01_create_audit_views.sql

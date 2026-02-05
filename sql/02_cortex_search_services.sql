@@ -1,20 +1,7 @@
 /*
-================================================================================
-AUDITING AI AGENTS IN SNOWFLAKE
-Script 02: Cortex Search Services
-================================================================================
-
-This script creates Cortex Search services for:
-- Searching agent conversation logs
-- Searching compliance policies
-- Searching past audit notes
-
-Prerequisites:
-- Run 00_setup_database.sql and 01_create_audit_views.sql first
-- Cortex Search enabled on your account
-- Some conversation data in AI_OBSERVABILITY_EVENTS
-
-================================================================================
+AUDITING AI AGENTS IN SNOWFLAKE - Script 02: Cortex Search Services
+Creates search services for conversations, policies, and audit notes.
+Requires: Run 00 and 01 scripts first; Cortex Search enabled
 */
 
 USE ROLE ACCOUNTADMIN;
@@ -240,43 +227,5 @@ FROM TABLE(FLATTEN(PARSE_JSON(
     )
 )['results']));
 
---------------------------------------------------------------------------------
--- NEXT STEPS
---------------------------------------------------------------------------------
-/*
-1. Verify services are created: SHOW CORTEX SEARCH SERVICES IN SCHEMA AGENT_AUDIT.CORTEX;
-2. Check service status: DESCRIBE CORTEX SEARCH SERVICE AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH;
-3. Wait for services to finish building (status should show as ACTIVE)
-4. Run 03_auditor_agent.sql to create the AI Auditor Agent
-
-TROUBLESHOOTING:
-----------------
-If search queries return no results:
-1. Verify the service exists: SHOW CORTEX SEARCH SERVICES IN SCHEMA AGENT_AUDIT.CORTEX;
-2. Check service status is ACTIVE: DESCRIBE CORTEX SEARCH SERVICE AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH;
-3. Ensure the underlying tables/views have data
-4. Use fully qualified service names in SEARCH_PREVIEW()
-
-Query Syntax Reference:
------------------------
--- Basic query (returns raw JSON):
-SELECT PARSE_JSON(
-    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
-        '<database>.<schema>.<service_name>',
-        '{"query": "search text", "columns": ["col1", "col2"], "limit": 10}'
-    )
-)['results'] as results;
-
--- Flattened results (returns rows):
-SELECT value['column_name']::STRING as column_name
-FROM TABLE(FLATTEN(PARSE_JSON(
-    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
-        '<database>.<schema>.<service_name>',
-        '{"query": "search text", "columns": ["column_name"], "limit": 10}'
-    )
-)['results']));
-
--- With filter:
-'{"query": "...", "columns": [...], "filter": {"@eq": {"column": "value"}}, "limit": 10}'
-
-*/
+-- NEXT: Run 03_auditor_agent.sql
+-- Query syntax: SNOWFLAKE.CORTEX.SEARCH_PREVIEW('<db.schema.service>', '{"query": "...", "columns": [...], "limit": N}')

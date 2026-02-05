@@ -1,43 +1,7 @@
 /*
-================================================================================
 EXPLORE SNOWFLAKE AI OBSERVABILITY TABLES
-================================================================================
-
-These queries help you understand the structure and sample data in:
-- SNOWFLAKE.LOCAL.AI_OBSERVABILITY_EVENTS (Cortex Agent events)
-- SNOWFLAKE.LOCAL.CORTEX_ANALYST_REQUESTS_RAW (Cortex Analyst queries)
-
-Run these to see what data is available before creating audit views.
-
-================================================================================
-ACTUAL SCHEMA (from DESCRIBE TABLE):
-================================================================================
-
-AI_OBSERVABILITY_EVENTS columns:
-- TIMESTAMP               : Event timestamp (TIMESTAMP_NTZ)
-- START_TIMESTAMP         : Event period starting timestamp (TIMESTAMP_NTZ)
-- OBSERVED_TIMESTAMP      : Used for logs without timestamp (TIMESTAMP_NTZ)
-- TRACE                   : Tracing context (OBJECT) - trace_id, span_id
-- RESOURCE                : For future use (OBJECT)
-- RESOURCE_ATTRIBUTES     : Source identification (OBJECT):
-                            - snow.user.name, snow.user.id
-                            - snow.session.id, snow.session.role.primary.name
-- SCOPE                   : Scope for signals (OBJECT) - e.g., "snow.cortex.agent"
-- SCOPE_ATTRIBUTES        : For future use (OBJECT)
-- RECORD_TYPE             : Type of RECORD value (VARCHAR) - e.g., "SPAN"
-- RECORD                  : Fixed fields per signal type (OBJECT):
-                            - name, kind, status.code
-- RECORD_ATTRIBUTES       : Variable attributes (OBJECT):
-                            - snow.ai.observability.object.name (agent name)
-                            - snow.ai.observability.object.type 
-                            - snow.ai.observability.database.name
-                            - snow.ai.observability.schema.name
-                            - snow.ai.observability.agent.thread_id
-                            - ai.observability.input_id, request_id
-- VALUE                   : Primary event value (VARIANT)
-- EXEMPLARS               : Exemplars for metrics (ARRAY)
-
-================================================================================
+Queries to understand AI_OBSERVABILITY_EVENTS and CORTEX_ANALYST_REQUESTS_RAW.
+Run these to explore schema and sample data before creating audit views.
 */
 
 --------------------------------------------------------------------------------
@@ -492,85 +456,18 @@ WHERE obs.RECORD_ATTRIBUTES:"snow.ai.observability.object.type"::STRING = 'Corte
 ORDER BY obs.TIMESTAMP DESC
 LIMIT 20;
 
---------------------------------------------------------------------------------
--- NOTES
---------------------------------------------------------------------------------
 /*
-================================================================================
-ACTUAL SCHEMA (from DESCRIBE TABLE)
-================================================================================
-
-1. AI_OBSERVABILITY_EVENTS columns:
-   ─────────────────────────────────
-   - TIMESTAMP               : Event timestamp (TIMESTAMP_NTZ)
-   - START_TIMESTAMP         : Event period starting timestamp (TIMESTAMP_NTZ)
-   - OBSERVED_TIMESTAMP      : Used for logs without timestamp (TIMESTAMP_NTZ)
-   - TRACE                   : Tracing context (OBJECT) - trace_id, span_id
-   - RESOURCE                : For future use (OBJECT)
-   - RESOURCE_ATTRIBUTES     : Source identification (OBJECT):
-       * "snow.user.name", "snow.user.id"
-       * "snow.session.id", "snow.session.role.primary.name"
-   - SCOPE                   : Scope for signals (OBJECT)
-   - SCOPE_ATTRIBUTES        : For future use (OBJECT)
-   - RECORD_TYPE             : Type of RECORD value (VARCHAR) - e.g., "SPAN"
-   - RECORD                  : Fixed fields per signal type (OBJECT):
-       * "name" (e.g., "Agent")
-       * "kind" (e.g., "SPAN_KIND_INTERNAL")
-       * "status" -> "code" (e.g., "STATUS_CODE_OK")
-   - RECORD_ATTRIBUTES       : Variable attributes (OBJECT):
-       * "snow.ai.observability.object.name" (agent name)
-       * "snow.ai.observability.object.type" (e.g., "Cortex Agent")
-       * "snow.ai.observability.database.name"
-       * "snow.ai.observability.schema.name"
-       * "snow.ai.observability.agent.thread_id"
-       * "ai.observability.input_id", "request_id"
-   - VALUE                   : Primary event value (VARIANT)
-   - EXEMPLARS               : Exemplars for metrics (ARRAY)
-
-2. CORTEX_ANALYST_REQUESTS_RAW columns:
-   ────────────────────────────────────
-   (Run DESCRIBE TABLE to confirm exact column names)
-   - TIMESTAMP               : Request timestamp
-   - RESOURCE_ATTRIBUTES     : Variant with semantic model & user info:
-       * "snow.user.name", "snow.user.id"
-       * "snow.session.id", "snow.session.role.primary.name"
-       * "snow.semantic_model.name" (e.g., "@DB.SCHEMA.FILE/model.yaml")
-       * "snow.semantic_model.hash"
-       * "snow.semantic_model.tables_referenced" (array)
-   - RECORD_TYPE             : String ("EVENT")
-   - RECORD                  : Variant with event name
-   - RECORD_ATTRIBUTES       : Variant with rich content (may vary):
-       * "latest_question" - User's natural language question
-       * "generated_sql" - SQL that Cortex Analyst produced
-       * "response_status_code" (200 = success)
-       * "response_time_ms" - Latency in milliseconds
-       * "response_body" -> message -> content[]
-       * "response_body" -> response_metadata
-
-3. KEY EXTRACTION PATHS:
-   ─────────────────────
-   AI_OBSERVABILITY_EVENTS:
-   - User name:   RESOURCE_ATTRIBUTES:"snow.user.name"::STRING
-   - Agent name:  RECORD_ATTRIBUTES:"snow.ai.observability.object.name"::STRING
-   - Thread ID:   RECORD_ATTRIBUTES:"snow.ai.observability.agent.thread_id"::NUMBER
-   - Trace ID:    TRACE:"trace_id"::STRING
-   - Span ID:     TRACE:"span_id"::STRING
-   - Span name:   RECORD:"name"::STRING
-   - Status:      RECORD:"status":"code"::STRING
-
-   CORTEX_ANALYST_REQUESTS_RAW:
-   - User name:      RESOURCE_ATTRIBUTES:"snow.user.name"::STRING
-   - Semantic model: RESOURCE_ATTRIBUTES:"snow.semantic_model.name"::STRING
-   - Question:       RECORD_ATTRIBUTES:"latest_question"::STRING
-   - Generated SQL:  RECORD_ATTRIBUTES:"generated_sql"::STRING
-   - Response time:  RECORD_ATTRIBUTES:"response_time_ms"::NUMBER
-   - Status code:    RECORD_ATTRIBUTES:"response_status_code"::NUMBER
-   - Request ID:     RECORD_ATTRIBUTES:"request_id"::STRING
-
-4. TO SEE DATA, YOU NEED:
-   - Active Cortex Agents with observability enabled
-   - Users interacting with agents or Cortex Analyst
-   - MONITOR privilege on the agents/objects
-   - AI Observability enabled (default for new agents)
-
+KEY EXTRACTION PATHS:
+  AI_OBSERVABILITY_EVENTS:
+    User:   RESOURCE_ATTRIBUTES:"snow.user.name"::STRING
+    Agent:  RECORD_ATTRIBUTES:"snow.ai.observability.object.name"::STRING
+    Thread: RECORD_ATTRIBUTES:"snow.ai.observability.agent.thread_id"::NUMBER
+    Trace:  TRACE:"trace_id"::STRING
+    Span:   RECORD:"name"::STRING
+    
+  CORTEX_ANALYST_REQUESTS_RAW:
+    User:     RESOURCE_ATTRIBUTES:"snow.user.name"::STRING
+    Model:    RESOURCE_ATTRIBUTES:"snow.semantic_model.name"::STRING
+    Question: RECORD_ATTRIBUTES:"latest_question"::STRING
+    SQL:      RECORD_ATTRIBUTES:"generated_sql"::STRING
 */

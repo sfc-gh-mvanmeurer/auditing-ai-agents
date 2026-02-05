@@ -1,26 +1,14 @@
--- =============================================================================
--- LLM-as-a-Judge Evaluation Pipeline for Agent Auditing
--- =============================================================================
--- This script implements systematic evaluation of agent responses using
--- LLM judges to assess quality, safety, and compliance metrics.
---
--- Prerequisites:
--- - 00_setup_database.sql has been run
--- - 01_create_audit_views.sql has been run
--- - AGENT_CONVERSATIONS view or table exists with agent interactions
--- - Access to CORTEX.COMPLETE LLM functions
--- =============================================================================
+/*
+LLM-as-a-Judge Evaluation Pipeline
+Systematic evaluation of agent responses for quality, safety, and compliance.
+Requires: Run 00, 01 first; CORTEX.COMPLETE access
+*/
 
 USE DATABASE AUDIT_DB;
 USE SCHEMA OBSERVABILITY;
 USE WAREHOUSE AUDIT_WH;
 
--- =============================================================================
--- STEP 1: Create source table for conversations (if not already exists)
--- =============================================================================
-
--- This view captures agent conversations from AI_OBSERVABILITY_EVENTS
--- Adapt this to match your actual event structure
+-- STEP 1: Source view for conversations (adapt to your event structure)
 CREATE OR REPLACE VIEW AGENT_CONVERSATIONS AS
 SELECT
     RECORD:thread_id::STRING as THREAD_ID,
@@ -38,9 +26,7 @@ WHERE RECORD:agent_type = 'CORTEX AGENT'
   AND RECORD:name = 'RESPONSE';
 
 
--- =============================================================================
--- STEP 2: Create evaluation dataset (sampled for cost control)
--- =============================================================================
+-- STEP 2: Evaluation dataset (sampled for cost control)
 
 CREATE OR REPLACE TABLE EVALUATION_DATASET AS
 SELECT 
@@ -60,11 +46,7 @@ WHERE EVENT_DATE >= DATEADD('day', -7, CURRENT_DATE())
 SAMPLE (100 ROWS);  -- Adjust sample size based on budget
 
 
--- =============================================================================
--- STEP 3: Define LLM Judge Functions
--- =============================================================================
-
--- Groundedness Judge: Evaluates if claims are supported by data/facts
+-- STEP 3: LLM Judge Functions
 CREATE OR REPLACE FUNCTION JUDGE_GROUNDEDNESS(
     user_query VARCHAR,
     agent_response VARCHAR
@@ -96,7 +78,7 @@ Respond ONLY in this exact JSON format:
 $$;
 
 
--- Answer Relevance Judge: Evaluates if response addresses the question
+-- Relevance Judge
 CREATE OR REPLACE FUNCTION JUDGE_RELEVANCE(
     user_query VARCHAR,
     agent_response VARCHAR
@@ -128,7 +110,7 @@ Respond ONLY in this exact JSON format:
 $$;
 
 
--- Safety/Compliance Judge: Evaluates policy adherence
+-- Safety Judge
 CREATE OR REPLACE FUNCTION JUDGE_SAFETY(
     user_query VARCHAR,
     agent_response VARCHAR
@@ -167,7 +149,7 @@ Respond ONLY in this exact JSON format:
 $$;
 
 
--- Comprehensiveness Judge: Evaluates completeness of response
+-- Comprehensiveness Judge
 CREATE OR REPLACE FUNCTION JUDGE_COMPREHENSIVENESS(
     user_query VARCHAR,
     agent_response VARCHAR
@@ -199,12 +181,7 @@ Respond ONLY in this exact JSON format:
 $$;
 
 
--- =============================================================================
--- STEP 4: Run Evaluations on Dataset
--- =============================================================================
-
--- Note: This can take time and incur LLM costs. 
--- For 100 samples × 4 judges = 400 CORTEX.COMPLETE calls
+-- STEP 4: Run Evaluations (100 samples × 4 judges = 400 LLM calls)
 
 CREATE OR REPLACE TABLE EVALUATION_RESULTS AS
 SELECT 
@@ -227,9 +204,7 @@ SELECT
 FROM EVALUATION_DATASET e;
 
 
--- =============================================================================
--- STEP 5: Parse Results into Usable Format
--- =============================================================================
+-- STEP 5: Parse Results
 
 CREATE OR REPLACE VIEW EVALUATION_PARSED AS
 SELECT 
@@ -283,11 +258,7 @@ SELECT
 FROM EVALUATION_RESULTS;
 
 
--- =============================================================================
 -- STEP 6: Analysis Queries
--- =============================================================================
-
--- Overall metrics summary
 SELECT 
     COUNT(*) as TOTAL_EVALUATED,
     
@@ -362,11 +333,7 @@ GROUP BY 1
 ORDER BY 1 DESC;
 
 
--- =============================================================================
--- STEP 7: Create Scheduled Evaluation Task
--- =============================================================================
-
--- Weekly evaluation task (runs Sundays at 2am ET)
+-- STEP 7: Scheduled Task (weekly evaluation)
 CREATE OR REPLACE TASK WEEKLY_AGENT_EVALUATION
     WAREHOUSE = AUDIT_WH
     SCHEDULE = 'USING CRON 0 2 * * 0 America/New_York'
@@ -401,11 +368,7 @@ END;
 -- ALTER TASK WEEKLY_AGENT_EVALUATION RESUME;
 
 
--- =============================================================================
--- STEP 8: Create Alert for Critical Issues
--- =============================================================================
-
--- Email alert when critical issues are found
+-- STEP 8: Alert for Critical Issues
 CREATE OR REPLACE ALERT CRITICAL_SAFETY_ALERT
     WAREHOUSE = AUDIT_WH
     SCHEDULE = '60 MINUTE'
@@ -426,9 +389,7 @@ CREATE OR REPLACE ALERT CRITICAL_SAFETY_ALERT
 -- ALTER ALERT CRITICAL_SAFETY_ALERT RESUME;
 
 
--- =============================================================================
--- VERIFICATION: Check everything was created
--- =============================================================================
+-- Verify objects created
 
 SHOW FUNCTIONS LIKE 'JUDGE%' IN SCHEMA AUDIT_DB.OBSERVABILITY;
 SHOW TABLES LIKE 'EVALUATION%' IN SCHEMA AUDIT_DB.OBSERVABILITY;

@@ -1,39 +1,16 @@
 /*
-================================================================================
-AUDITING AI AGENTS IN SNOWFLAKE
-Script 03: The Auditor Agent
-================================================================================
-
-This script creates an AI-powered Auditor Agent that helps human auditors
-investigate agent behavior using natural language queries.
-
-The Auditor Agent combines:
-- Cortex Analyst: Query metrics and patterns via Semantic Views
-- Cortex Search: Find specific conversations and policies
-
-Prerequisites:
-- Run 00, 01, 02 scripts first
-- Cortex Agents enabled on your account
-
-Reference: https://docs.snowflake.com/en/user-guide/views-semantic/sql
-
-================================================================================
+AUDITING AI AGENTS IN SNOWFLAKE - Script 03: Auditor Agent
+Creates Semantic Views and AI Agent for auditing Cortex Agents.
+Requires: Run 00, 01, 02 scripts first; Cortex Agents enabled
+Ref: https://docs.snowflake.com/en/user-guide/views-semantic/sql
 */
 
 USE ROLE ACCOUNTADMIN;
 USE DATABASE AGENT_AUDIT;
 USE WAREHOUSE AUDIT_WH;
 
---------------------------------------------------------------------------------
--- 1. CREATE SEMANTIC VIEWS FOR CORTEX ANALYST
---------------------------------------------------------------------------------
--- Semantic Views provide structured metadata that enables natural language
--- queries via Cortex Analyst without requiring a separate YAML file.
-
--- ============================================================================
--- Semantic View 1: Agent Activity Analytics
--- ============================================================================
--- For analyzing agent events, spans, and overall activity patterns
+-- 1. SEMANTIC VIEWS FOR CORTEX ANALYST
+-- Enable natural language queries without YAML files
 
 CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_ACTIVITY_ANALYTICS
 
@@ -112,10 +89,7 @@ GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_ACTIVITY_ANALYTICS
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_ACTIVITY_ANALYTICS 
     TO ROLE AGENT_AUDIT_ADMIN;
 
--- ============================================================================
 -- Semantic View 2: Agent Feedback Analytics
--- ============================================================================
--- For analyzing user satisfaction and feedback patterns
 
 CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_FEEDBACK_ANALYTICS
 
@@ -170,10 +144,7 @@ GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_FEEDBACK_ANALYTICS
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_FEEDBACK_ANALYTICS 
     TO ROLE AGENT_AUDIT_ADMIN;
 
--- ============================================================================
 -- Semantic View 3: Agent Conversation Analytics
--- ============================================================================
--- For analyzing conversation patterns and content
 
 CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_CONVERSATION_ANALYTICS
 
@@ -234,10 +205,7 @@ GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_CONVERSATION_ANALY
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_CONVERSATION_ANALYTICS 
     TO ROLE AGENT_AUDIT_ADMIN;
 
--- ============================================================================
 -- Semantic View 4: Cortex Analyst Usage Analytics
--- ============================================================================
--- For analyzing Cortex Analyst request patterns
 
 CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.CORTEX_ANALYST_ANALYTICS
 
@@ -304,23 +272,8 @@ GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.CORTEX_ANALYST_ANALYTICS
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.CORTEX_ANALYST_ANALYTICS 
     TO ROLE AGENT_AUDIT_ADMIN;
 
--- ============================================================================
--- Verify Semantic Views Created
--- ============================================================================
-
-SELECT 'Verifying semantic views...' AS status;
-
+-- Verify semantic views
 SHOW SEMANTIC VIEWS IN SCHEMA AGENT_AUDIT.OBSERVABILITY;
-
--- Test that underlying views have data
-SELECT 'AGENT_EVENTS_FLATTENED' AS source_view, COUNT(*) AS row_count 
-FROM AGENT_AUDIT.OBSERVABILITY.AGENT_EVENTS_FLATTENED;
-
-SELECT 'AGENT_CONVERSATIONS' AS source_view, COUNT(*) AS row_count 
-FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS;
-
-SELECT 'AGENT_FEEDBACK_SUMMARY' AS source_view, COUNT(*) AS row_count 
-FROM AGENT_AUDIT.OBSERVABILITY.AGENT_FEEDBACK_SUMMARY;
 
 --------------------------------------------------------------------------------
 -- 2. CREATE THE AUDITOR AGENT
