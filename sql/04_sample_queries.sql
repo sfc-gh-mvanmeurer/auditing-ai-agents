@@ -28,13 +28,13 @@ ORDER BY EVENT_DATE DESC, conversations DESC;
 -- A2. Agent tool usage distribution
 SELECT 
     AGENT_NAME,
-    TOOL_USED,
+    SPAN_NAME as tool_used,
     COUNT(*) as usage_count,
     ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY AGENT_NAME), 2) as pct_of_agent
 FROM AGENT_TOOL_USAGE
 WHERE EVENT_DATE >= DATEADD('day', -30, CURRENT_DATE())
-  AND TOOL_USED IS NOT NULL
-GROUP BY AGENT_NAME, TOOL_USED
+  AND SPAN_NAME IS NOT NULL
+GROUP BY AGENT_NAME, SPAN_NAME
 ORDER BY AGENT_NAME, usage_count DESC;
 
 -- A3. Average response times by agent

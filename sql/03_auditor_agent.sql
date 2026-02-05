@@ -83,6 +83,17 @@ CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_ACTIVITY_ANALYTICS
 
   COMMENT = 'Agent activity analytics for monitoring Cortex Agent events and performance';
 
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. daily_conversation_counts
+     Question: "Show daily agent conversation counts for the last 30 days"
+     SQL: SELECT AGENT_NAME, EVENT_DATE, COUNT(DISTINCT THREAD_ID) as conversations, COUNT(DISTINCT USER_NAME) as unique_users, COUNT(*) as total_events FROM AGENT_AUDIT.OBSERVABILITY.AGENT_EVENTS_FLATTENED WHERE EVENT_DATE >= DATEADD(day, -30, CURRENT_DATE()) GROUP BY AGENT_NAME, EVENT_DATE ORDER BY EVENT_DATE DESC, conversations DESC
+
+  2. tool_usage_distribution
+     Question: "What is the tool usage distribution by agent?"
+     SQL: SELECT AGENT_NAME, SPAN_NAME as tool_used, COUNT(*) as usage_count, ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY AGENT_NAME), 2) as pct_of_agent FROM AGENT_AUDIT.OBSERVABILITY.AGENT_TOOL_USAGE WHERE EVENT_DATE >= DATEADD(day, -30, CURRENT_DATE()) AND SPAN_NAME IS NOT NULL GROUP BY AGENT_NAME, SPAN_NAME ORDER BY AGENT_NAME, usage_count DESC
+*/
+
 -- Grant access
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_ACTIVITY_ANALYTICS 
     TO ROLE AGENT_AUDIT_VIEWER;
@@ -137,6 +148,21 @@ CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_FEEDBACK_ANALYTICS
   )
 
   COMMENT = 'Agent feedback analytics for monitoring user satisfaction';
+
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. feedback_rates_by_agent
+     Question: "What are the feedback rates by agent?"
+     SQL: SELECT AGENT_NAME, SUM(TOTAL_FEEDBACK) as total_feedback, SUM(POSITIVE_COUNT) as positive, SUM(NEGATIVE_COUNT) as negative, ROUND(SUM(POSITIVE_COUNT) * 100.0 / NULLIF(SUM(TOTAL_FEEDBACK), 0), 2) as positive_rate_pct FROM AGENT_AUDIT.OBSERVABILITY.AGENT_FEEDBACK_SUMMARY WHERE EVENT_DATE >= DATEADD(day, -30, CURRENT_DATE()) GROUP BY AGENT_NAME ORDER BY positive_rate_pct ASC
+
+  2. negative_feedback_trends
+     Question: "Show negative feedback trends with alert levels"
+     SQL: SELECT EVENT_DATE, AGENT_NAME, NEGATIVE_COUNT, TOTAL_FEEDBACK, NEGATIVE_RATE_PCT, CASE WHEN NEGATIVE_RATE_PCT > 20 THEN 'HIGH' WHEN NEGATIVE_RATE_PCT > 10 THEN 'ELEVATED' ELSE 'NORMAL' END as alert_level FROM AGENT_AUDIT.OBSERVABILITY.AGENT_FEEDBACK_SUMMARY WHERE EVENT_DATE >= DATEADD(day, -14, CURRENT_DATE()) AND TOTAL_FEEDBACK >= 5 ORDER BY EVENT_DATE DESC, NEGATIVE_RATE_PCT DESC
+
+  3. negative_feedback_conversations
+     Question: "Find conversations with negative feedback"
+     SQL: SELECT AGENT_NAME, USER_NAME, THREAD_ID, EVENT_TIMESTAMP, LEFT(USER_QUERY, 200) as user_query_preview, LEFT(AGENT_RESPONSE, 200) as agent_response_preview, FEEDBACK_COMMENT FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS WHERE FEEDBACK_SENTIMENT = 'NEGATIVE' AND EVENT_DATE >= DATEADD(day, -7, CURRENT_DATE()) ORDER BY EVENT_TIMESTAMP DESC LIMIT 20
+*/
 
 -- Grant access
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_FEEDBACK_ANALYTICS 
@@ -198,6 +224,13 @@ CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.AGENT_CONVERSATION_ANALYTICS
   )
 
   COMMENT = 'Agent conversation analytics for analyzing user interactions';
+
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. response_times_by_agent
+     Question: "What are the average response times by agent?"
+     SQL: SELECT AGENT_NAME, COUNT(*) as responses, ROUND(AVG(RESPONSE_TIME_MS), 2) as avg_response_ms, ROUND(MEDIAN(RESPONSE_TIME_MS), 2) as median_response_ms, MAX(RESPONSE_TIME_MS) as max_response_ms FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS WHERE EVENT_DATE >= DATEADD(day, -30, CURRENT_DATE()) GROUP BY AGENT_NAME ORDER BY avg_response_ms DESC
+*/
 
 -- Grant access
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.AGENT_CONVERSATION_ANALYTICS 
@@ -272,6 +305,204 @@ GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.CORTEX_ANALYST_ANALYTICS
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.CORTEX_ANALYST_ANALYTICS 
     TO ROLE AGENT_AUDIT_ADMIN;
 
+-- Semantic View 5: Security & Failed Queries Analytics
+CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.SECURITY_ANALYTICS
+
+  TABLES (
+    failed AS AGENT_AUDIT.OBSERVABILITY.FAILED_QUERIES_ANALYSIS
+      PRIMARY KEY (QUERY_ID)
+      COMMENT = 'Failed queries categorized by error type'
+  )
+
+  FACTS (
+    failed.failure_hour AS FAILURE_HOUR
+      COMMENT = 'Hour when failure occurred'
+  )
+
+  DIMENSIONS (
+    failed.query_id AS QUERY_ID
+      COMMENT = 'Unique query identifier',
+    failed.user_name AS USER_NAME
+      COMMENT = 'User who ran the query',
+    failed.role_name AS ROLE_NAME
+      COMMENT = 'Role used for the query',
+    failed.warehouse_name AS WAREHOUSE_NAME
+      COMMENT = 'Warehouse used',
+    failed.error_code AS ERROR_CODE
+      COMMENT = 'Snowflake error code',
+    failed.error_category AS ERROR_CATEGORY
+      COMMENT = 'Categorized error type',
+    failed.failure_date AS FAILURE_DATE
+      COMMENT = 'Date of the failure'
+  )
+
+  METRICS (
+    failed.total_failures AS COUNT(*)
+      COMMENT = 'Total number of failed queries',
+    failed.unique_users AS COUNT(DISTINCT USER_NAME)
+      COMMENT = 'Number of users with failures',
+    failed.permission_denied AS COUNT_IF(ERROR_CATEGORY = 'PERMISSION_DENIED')
+      COMMENT = 'Permission denied errors',
+    failed.object_not_found AS COUNT_IF(ERROR_CATEGORY = 'OBJECT_NOT_FOUND')
+      COMMENT = 'Object not found errors',
+    failed.syntax_errors AS COUNT_IF(ERROR_CATEGORY = 'SYNTAX_ERROR')
+      COMMENT = 'Syntax errors',
+    failed.timeouts AS COUNT_IF(ERROR_CATEGORY = 'TIMEOUT')
+      COMMENT = 'Timeout errors'
+  )
+
+  COMMENT = 'Security analytics for failed queries and anomaly detection';
+
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. failures_by_category
+     Question: "Show failed queries grouped by error category"
+     SQL: SELECT error_category, COUNT(*) as failure_count, COUNT(DISTINCT user_name) as affected_users, ARRAY_AGG(DISTINCT error_code) as error_codes FROM AGENT_AUDIT.OBSERVABILITY.FAILED_QUERIES_ANALYSIS WHERE failure_date >= DATEADD(day, -7, CURRENT_DATE()) GROUP BY error_category ORDER BY failure_count DESC
+
+  2. permission_denied_errors
+     Question: "Show permission denied errors by user"
+     SQL: SELECT user_name, role_name, failure_date, COUNT(*) as denial_count, ARRAY_AGG(DISTINCT LEFT(query_preview, 100)) as query_samples FROM AGENT_AUDIT.OBSERVABILITY.FAILED_QUERIES_ANALYSIS WHERE error_category = 'PERMISSION_DENIED' AND failure_date >= DATEADD(day, -7, CURRENT_DATE()) GROUP BY user_name, role_name, failure_date ORDER BY denial_count DESC
+
+  3. high_row_queries
+     Question: "Find queries with unusually high row counts"
+     SQL: SELECT user_name, query_id, rows_produced, LEFT(query_text, 300) as query_preview, start_time FROM AGENT_AUDIT.OBSERVABILITY.AGENT_QUERY_HISTORY WHERE rows_produced > 10000 AND start_time >= DATEADD(day, -7, CURRENT_TIMESTAMP()) ORDER BY rows_produced DESC LIMIT 20
+
+  4. after_hours_activity
+     Question: "Show after-hours query activity"
+     SQL: SELECT user_name, DATE(start_time) as activity_date, HOUR(start_time) as activity_hour, COUNT(*) as query_count FROM AGENT_AUDIT.OBSERVABILITY.AGENT_QUERY_HISTORY WHERE HOUR(start_time) NOT BETWEEN 8 AND 18 AND DAYOFWEEK(start_time) NOT IN (0, 6) AND start_time >= DATEADD(day, -30, CURRENT_TIMESTAMP()) GROUP BY user_name, DATE(start_time), HOUR(start_time) HAVING query_count > 5 ORDER BY activity_date DESC, query_count DESC
+*/
+
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.SECURITY_ANALYTICS 
+    TO ROLE AGENT_AUDIT_VIEWER;
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.SECURITY_ANALYTICS 
+    TO ROLE AGENT_AUDIT_ADMIN;
+
+-- Semantic View 6: Data Lineage Analytics
+CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.DATA_LINEAGE_ANALYTICS
+
+  TABLES (
+    lineage AS AGENT_AUDIT.OBSERVABILITY.DATA_ACCESS_LINEAGE
+      PRIMARY KEY (QUERY_ID)
+      COMMENT = 'Data access lineage from ACCESS_HISTORY'
+  )
+
+  FACTS (
+    lineage.rows_produced AS ROWS_PRODUCED
+      COMMENT = 'Number of rows returned by query',
+    lineage.bytes_scanned AS BYTES_SCANNED
+      COMMENT = 'Bytes scanned by query'
+  )
+
+  DIMENSIONS (
+    lineage.query_id AS QUERY_ID
+      COMMENT = 'Unique query identifier',
+    lineage.user_name AS USER_NAME
+      COMMENT = 'User who ran the query',
+    lineage.role_name AS ROLE_NAME
+      COMMENT = 'Role used for the query',
+    lineage.source_table AS SOURCE_TABLE
+      COMMENT = 'Table that was accessed',
+    lineage.source_type AS SOURCE_TYPE
+      COMMENT = 'Type of source object',
+    lineage.target_object AS TARGET_OBJECT
+      COMMENT = 'Target object of the query',
+    lineage.access_time AS ACCESS_TIME
+      COMMENT = 'When the access occurred'
+  )
+
+  METRICS (
+    lineage.total_accesses AS COUNT(*)
+      COMMENT = 'Total number of data accesses',
+    lineage.unique_users AS COUNT(DISTINCT USER_NAME)
+      COMMENT = 'Number of unique users',
+    lineage.unique_tables AS COUNT(DISTINCT SOURCE_TABLE)
+      COMMENT = 'Number of unique tables accessed',
+    lineage.total_rows AS SUM(ROWS_PRODUCED)
+      COMMENT = 'Total rows retrieved'
+  )
+
+  COMMENT = 'Data lineage analytics for tracking table and column access';
+
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. most_accessed_tables
+     Question: "What are the most frequently accessed tables?"
+     SQL: SELECT source_table, COUNT(*) as access_count, COUNT(DISTINCT user_name) as unique_users, SUM(rows_produced) as total_rows_returned FROM AGENT_AUDIT.OBSERVABILITY.DATA_ACCESS_LINEAGE WHERE access_time >= DATEADD(day, -30, CURRENT_TIMESTAMP()) AND source_table IS NOT NULL GROUP BY source_table ORDER BY access_count DESC LIMIT 20
+*/
+
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.DATA_LINEAGE_ANALYTICS 
+    TO ROLE AGENT_AUDIT_VIEWER;
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.DATA_LINEAGE_ANALYTICS 
+    TO ROLE AGENT_AUDIT_ADMIN;
+
+-- Semantic View 7: User Behavior Analytics
+CREATE OR REPLACE SEMANTIC VIEW OBSERVABILITY.USER_BEHAVIOR_ANALYTICS
+
+  TABLES (
+    activity AS AGENT_AUDIT.OBSERVABILITY.USER_ACTIVITY_SUMMARY
+      PRIMARY KEY (USER_NAME, ACTIVITY_DATE)
+      COMMENT = 'Daily user activity summary'
+  )
+
+  FACTS (
+    activity.total_queries AS TOTAL_QUERIES
+      COMMENT = 'Total queries run by user',
+    activity.successful_queries AS SUCCESSFUL_QUERIES
+      COMMENT = 'Number of successful queries',
+    activity.failed_queries AS FAILED_QUERIES
+      COMMENT = 'Number of failed queries',
+    activity.failure_rate_pct AS FAILURE_RATE_PCT
+      COMMENT = 'Query failure rate percentage',
+    activity.total_rows_produced AS TOTAL_ROWS_PRODUCED
+      COMMENT = 'Total rows returned',
+    activity.total_bytes_scanned AS TOTAL_BYTES_SCANNED
+      COMMENT = 'Total bytes scanned',
+    activity.avg_query_seconds AS AVG_QUERY_SECONDS
+      COMMENT = 'Average query duration in seconds',
+    activity.active_hours AS ACTIVE_HOURS
+      COMMENT = 'Number of distinct hours with activity'
+  )
+
+  DIMENSIONS (
+    activity.user_name AS USER_NAME
+      COMMENT = 'Username',
+    activity.activity_date AS ACTIVITY_DATE
+      COMMENT = 'Date of activity'
+  )
+
+  METRICS (
+    activity.total_query_count AS SUM(TOTAL_QUERIES)
+      COMMENT = 'Sum of all queries',
+    activity.total_failures AS SUM(FAILED_QUERIES)
+      COMMENT = 'Sum of all failures',
+    activity.unique_users AS COUNT(DISTINCT USER_NAME)
+      COMMENT = 'Number of unique users',
+    activity.active_days AS COUNT(DISTINCT ACTIVITY_DATE)
+      COMMENT = 'Number of active days'
+  )
+
+  COMMENT = 'User behavior analytics for monitoring query patterns and anomalies';
+
+/*
+VERIFIED QUERIES TO ADD VIA UI:
+  1. user_activity_summary
+     Question: "Show user activity summary for the last 30 days"
+     SQL: SELECT user_name, COUNT(DISTINCT activity_date) as active_days, SUM(total_queries) as total_queries, SUM(failed_queries) as total_failures, ROUND(AVG(failure_rate_pct), 2) as avg_failure_rate, SUM(total_rows_produced) as total_rows FROM AGENT_AUDIT.OBSERVABILITY.USER_ACTIVITY_SUMMARY WHERE activity_date >= DATEADD(day, -30, CURRENT_DATE()) GROUP BY user_name ORDER BY total_queries DESC
+
+  2. high_failure_rate_users
+     Question: "Which users have high query failure rates?"
+     SQL: SELECT user_name, activity_date, total_queries, failed_queries, failure_rate_pct, CASE WHEN failure_rate_pct > 20 THEN 'INVESTIGATE' WHEN failure_rate_pct > 10 THEN 'MONITOR' ELSE 'NORMAL' END as status FROM AGENT_AUDIT.OBSERVABILITY.USER_ACTIVITY_SUMMARY WHERE activity_date >= DATEADD(day, -7, CURRENT_DATE()) AND total_queries >= 10 AND failure_rate_pct > 10 ORDER BY failure_rate_pct DESC
+
+  3. role_usage_patterns
+     Question: "What are the role usage patterns?"
+     SQL: SELECT role_name, COUNT(DISTINCT user_name) as unique_users, COUNT(*) as total_queries, SUM(rows_produced) as total_rows FROM AGENT_AUDIT.OBSERVABILITY.AGENT_QUERY_HISTORY WHERE start_time >= DATEADD(day, -30, CURRENT_TIMESTAMP()) GROUP BY role_name ORDER BY total_queries DESC
+*/
+
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.USER_BEHAVIOR_ANALYTICS 
+    TO ROLE AGENT_AUDIT_VIEWER;
+GRANT REFERENCES, SELECT ON SEMANTIC VIEW OBSERVABILITY.USER_BEHAVIOR_ANALYTICS 
+    TO ROLE AGENT_AUDIT_ADMIN;
+
 -- Verify semantic views
 SHOW SEMANTIC VIEWS IN SCHEMA AGENT_AUDIT.OBSERVABILITY;
 
@@ -322,10 +553,13 @@ instructions:
     Tool Selection Guidelines:
     
     1. For QUANTITATIVE queries (counts, averages, trends, filtering):
-       - Use AgentActivityAnalyst for agent events, error rates, durations
-       - Use AgentFeedbackAnalyst for satisfaction metrics, feedback rates
+       - Use AgentActivityAnalyst for agent events, error rates, durations, tool usage
+       - Use AgentFeedbackAnalyst for satisfaction metrics, feedback rates, negative feedback
        - Use ConversationAnalyst for conversation patterns, response times
        - Use AnalystUsageAnalyst for Cortex Analyst query patterns
+       - Use SecurityAnalyst for failed queries, permission errors, after-hours activity
+       - Use DataLineageAnalyst for table access patterns, data lineage
+       - Use UserBehaviorAnalyst for user activity, failure rates, role usage
     
     2. For CONTENT SEARCH queries (find specific text, notes, policies):
        - Use ConversationSearch for finding specific agent conversations
@@ -337,7 +571,8 @@ instructions:
     
     Multi-tool coordination:
     - For activity summaries: query AgentActivityAnalyst + AgentFeedbackAnalyst
-    - For investigations: search conversations first, then get metrics
+    - For security investigations: use SecurityAnalyst + UserBehaviorAnalyst
+    - For data access audits: use DataLineageAnalyst + SecurityAnalyst
     - For compliance checks: search PolicySearch, compare with conversation data
 
   response: |
@@ -399,6 +634,21 @@ tools:
       name: AnalystUsageAnalyst
       description: "Analyzes Cortex Analyst usage including query patterns, verified query hits, and response times. Use for questions about how Cortex Analyst is being used."
 
+  - tool_spec:
+      type: cortex_analyst_text_to_sql
+      name: SecurityAnalyst
+      description: "Analyzes security events including failed queries, permission denied errors, high row count queries, and after-hours activity. Use for security investigations and anomaly detection."
+
+  - tool_spec:
+      type: cortex_analyst_text_to_sql
+      name: DataLineageAnalyst
+      description: "Analyzes data access patterns including table access frequency, user access to sensitive data, and column-level access. Use for data lineage and access auditing."
+
+  - tool_spec:
+      type: cortex_analyst_text_to_sql
+      name: UserBehaviorAnalyst
+      description: "Analyzes user behavior patterns including query volumes, failure rates, role usage, and activity timing. Use for user behavior analysis and anomaly detection."
+
   # Cortex Search tools for unstructured content search
   - tool_spec:
       type: cortex_search
@@ -433,6 +683,15 @@ tool_resources:
   
   AnalystUsageAnalyst:
     semantic_view: AGENT_AUDIT.OBSERVABILITY.CORTEX_ANALYST_ANALYTICS
+
+  SecurityAnalyst:
+    semantic_view: AGENT_AUDIT.OBSERVABILITY.SECURITY_ANALYTICS
+
+  DataLineageAnalyst:
+    semantic_view: AGENT_AUDIT.OBSERVABILITY.DATA_LINEAGE_ANALYTICS
+
+  UserBehaviorAnalyst:
+    semantic_view: AGENT_AUDIT.OBSERVABILITY.USER_BEHAVIOR_ANALYTICS
   
   ConversationSearch:
     name: AGENT_AUDIT.CORTEX.AGENT_CONVERSATION_SEARCH
