@@ -27,10 +27,10 @@ USE WAREHOUSE AUDIT_WH;
 -- Enables natural language search over agent conversations
 
 CREATE OR REPLACE CORTEX SEARCH SERVICE CORTEX.AGENT_CONVERSATION_SEARCH
+    ON conversation_text
+    ATTRIBUTES user_name, agent_name, thread_id, event_date, feedback_sentiment
     WAREHOUSE = AUDIT_WH
     TARGET_LAG = '1 hour'
-    ON conversation_text
-    ATTRIBUTES user_name, agent_name, thread_id, event_date, feedback_sentiment, tool_used
 AS (
     SELECT 
         -- Searchable text: combine query and response
@@ -39,14 +39,12 @@ AS (
         -- Filterable attributes
         USER_NAME as user_name,
         AGENT_NAME as agent_name,
-        THREAD_ID as thread_id,
+        CAST(THREAD_ID AS STRING) as thread_id,
         EVENT_DATE::STRING as event_date,
-        FEEDBACK_SENTIMENT as feedback_sentiment,
-        TOOL_USED as tool_used
+        FEEDBACK_SENTIMENT as feedback_sentiment
         
     FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS
-    WHERE conversation_text IS NOT NULL
-      AND LENGTH(conversation_text) > 10
+    WHERE USER_QUERY IS NOT NULL OR AGENT_RESPONSE IS NOT NULL
 );
 
 COMMENT ON CORTEX SEARCH SERVICE CORTEX.AGENT_CONVERSATION_SEARCH IS 
@@ -58,10 +56,10 @@ COMMENT ON CORTEX SEARCH SERVICE CORTEX.AGENT_CONVERSATION_SEARCH IS
 -- Enables natural language search over compliance policies
 
 CREATE OR REPLACE CORTEX SEARCH SERVICE CORTEX.COMPLIANCE_POLICY_SEARCH
-    WAREHOUSE = AUDIT_WH
-    TARGET_LAG = '1 day'
     ON policy_text
     ATTRIBUTES policy_id, policy_name, policy_category, effective_date
+    WAREHOUSE = AUDIT_WH
+    TARGET_LAG = '1 day'
 AS (
     SELECT 
         -- Searchable text: policy content
@@ -86,10 +84,10 @@ COMMENT ON CORTEX SEARCH SERVICE CORTEX.COMPLIANCE_POLICY_SEARCH IS
 -- Enables natural language search over past audit notes
 
 CREATE OR REPLACE CORTEX SEARCH SERVICE CORTEX.AUDIT_NOTES_SEARCH
-    WAREHOUSE = AUDIT_WH
-    TARGET_LAG = '1 hour'
     ON note_text
     ATTRIBUTES auditor_name, investigation_id, agent_name, severity, created_date
+    WAREHOUSE = AUDIT_WH
+    TARGET_LAG = '1 hour'
 AS (
     SELECT 
         -- Searchable text: audit note content
@@ -122,63 +120,163 @@ GRANT USAGE ON CORTEX SEARCH SERVICE CORTEX.AUDIT_NOTES_SEARCH
     TO ROLE AGENT_AUDIT_VIEWER;
 
 --------------------------------------------------------------------------------
--- 5. TEST SEARCH SERVICES
+-- 5. VERIFY SEARCH SERVICES CREATED
 --------------------------------------------------------------------------------
 
--- Test policy search
-SELECT 'Testing policy search...' as status;
+SELECT 'Verifying search services...' as status;
 
-SELECT 
-    policy_name,
-    policy_category,
-    LEFT(policy_text, 200) as policy_preview
-FROM TABLE(
-    CORTEX.COMPLIANCE_POLICY_SEARCH!SEARCH(
-        query => 'data access security',
-        columns => ['policy_text'],
-        limit => 3
+-- Check if search services exist
+SHOW CORTEX SEARCH SERVICES IN SCHEMA AGENT_AUDIT.CORTEX;
+
+-- Check if underlying data exists
+SELECT 'Checking underlying data...' as status;
+
+SELECT 'COMPLIANCE_POLICIES' as source_table, COUNT(*) as row_count 
+FROM AGENT_AUDIT.REFERENCE.COMPLIANCE_POLICIES;
+
+SELECT 'AUDIT_NOTES' as source_table, COUNT(*) as row_count 
+FROM AGENT_AUDIT.REFERENCE.AUDIT_NOTES;
+
+SELECT 'AGENT_CONVERSATIONS (view)' as source_table, COUNT(*) as row_count 
+FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS;
+
+--------------------------------------------------------------------------------
+-- 6. TEST SEARCH SERVICES (run separately after services are ready)
+--------------------------------------------------------------------------------
+-- NOTE: Search services need time to build. Check the service status first:
+-- DESCRIBE CORTEX SEARCH SERVICE AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH;
+
+-- Per Snowflake documentation, the correct way to query Cortex Search Services
+-- in SQL is using SNOWFLAKE.CORTEX.SEARCH_PREVIEW() function.
+-- Reference: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-search/query-cortex-search-service
+
+-- ============================================================================
+-- TEST QUERY 1: Search Compliance Policies
+-- ============================================================================
+-- This returns the raw JSON results
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH',
+        '{
+            "query": "data access security",
+            "columns": ["policy_text", "policy_name", "policy_category"],
+            "limit": 5
+        }'
     )
-);
+)['results'] as results;
 
--- Note: Conversation search will only work once you have conversation data
--- SELECT 
---     agent_name,
---     user_name,
---     LEFT(conversation_text, 200) as conversation_preview
--- FROM TABLE(
---     CORTEX.AGENT_CONVERSATION_SEARCH!SEARCH(
---         query => 'access denied',
---         columns => ['conversation_text'],
---         limit => 5
---     )
--- );
+-- This flattens the results into rows for easier reading
+SELECT 
+    value['policy_name']::STRING as policy_name,
+    value['policy_category']::STRING as policy_category,
+    LEFT(value['policy_text']::STRING, 200) as policy_preview
+FROM TABLE(FLATTEN(PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH',
+        '{
+            "query": "data access security",
+            "columns": ["policy_text", "policy_name", "policy_category"],
+            "limit": 5
+        }'
+    )
+)['results']));
 
---------------------------------------------------------------------------------
--- 6. VERIFY SEARCH SERVICES CREATED
---------------------------------------------------------------------------------
+-- ============================================================================
+-- TEST QUERY 2: Search Agent Conversations
+-- ============================================================================
+-- Only works if you have conversation data in AI_OBSERVABILITY_EVENTS
+SELECT 
+    value['agent_name']::STRING as agent_name,
+    value['user_name']::STRING as user_name,
+    value['feedback_sentiment']::STRING as sentiment,
+    LEFT(value['conversation_text']::STRING, 200) as conversation_preview
+FROM TABLE(FLATTEN(PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'AGENT_AUDIT.CORTEX.AGENT_CONVERSATION_SEARCH',
+        '{
+            "query": "access denied error",
+            "columns": ["conversation_text", "agent_name", "user_name", "feedback_sentiment"],
+            "limit": 5
+        }'
+    )
+)['results']));
 
-SELECT 'Search services created' as status;
+-- ============================================================================
+-- TEST QUERY 3: Search with Filter
+-- ============================================================================
+-- Filter uses the @eq operator for exact matches
+SELECT 
+    value['policy_name']::STRING as policy_name,
+    value['policy_category']::STRING as policy_category,
+    LEFT(value['policy_text']::STRING, 200) as policy_preview
+FROM TABLE(FLATTEN(PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH',
+        '{
+            "query": "security requirements",
+            "columns": ["policy_text", "policy_name", "policy_category"],
+            "filter": {"@eq": {"policy_category": "DATA_ACCESS"}},
+            "limit": 5
+        }'
+    )
+)['results']));
 
-SHOW CORTEX SEARCH SERVICES IN SCHEMA CORTEX;
+-- ============================================================================
+-- TEST QUERY 4: Search Audit Notes
+-- ============================================================================
+SELECT 
+    value['investigation_id']::STRING as investigation_id,
+    value['agent_name']::STRING as agent_name,
+    value['severity']::STRING as severity,
+    LEFT(value['note_text']::STRING, 200) as note_preview
+FROM TABLE(FLATTEN(PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        'AGENT_AUDIT.CORTEX.AUDIT_NOTES_SEARCH',
+        '{
+            "query": "suspicious activity",
+            "columns": ["note_text", "investigation_id", "agent_name", "severity"],
+            "limit": 5
+        }'
+    )
+)['results']));
 
 --------------------------------------------------------------------------------
 -- NEXT STEPS
 --------------------------------------------------------------------------------
 /*
-1. Run 03_auditor_agent.sql to create the AI Auditor Agent
-2. Search services will auto-refresh based on TARGET_LAG settings
-3. Use these searches in the Auditor Agent for natural language investigation
+1. Verify services are created: SHOW CORTEX SEARCH SERVICES IN SCHEMA AGENT_AUDIT.CORTEX;
+2. Check service status: DESCRIBE CORTEX SEARCH SERVICE AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH;
+3. Wait for services to finish building (status should show as ACTIVE)
+4. Run 03_auditor_agent.sql to create the AI Auditor Agent
 
-Example usage:
+TROUBLESHOOTING:
+----------------
+If search queries return no results:
+1. Verify the service exists: SHOW CORTEX SEARCH SERVICES IN SCHEMA AGENT_AUDIT.CORTEX;
+2. Check service status is ACTIVE: DESCRIBE CORTEX SEARCH SERVICE AGENT_AUDIT.CORTEX.COMPLIANCE_POLICY_SEARCH;
+3. Ensure the underlying tables/views have data
+4. Use fully qualified service names in SEARCH_PREVIEW()
 
--- Search for conversations mentioning "denied"
-SELECT * FROM TABLE(
-    CORTEX.AGENT_CONVERSATION_SEARCH!SEARCH(
-        query => 'permission denied access',
-        columns => ['conversation_text'],
-        filter => {'feedback_sentiment': 'NEGATIVE'},
-        limit => 10
+Query Syntax Reference:
+-----------------------
+-- Basic query (returns raw JSON):
+SELECT PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        '<database>.<schema>.<service_name>',
+        '{"query": "search text", "columns": ["col1", "col2"], "limit": 10}'
     )
-);
+)['results'] as results;
+
+-- Flattened results (returns rows):
+SELECT value['column_name']::STRING as column_name
+FROM TABLE(FLATTEN(PARSE_JSON(
+    SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
+        '<database>.<schema>.<service_name>',
+        '{"query": "search text", "columns": ["column_name"], "limit": 10}'
+    )
+)['results']));
+
+-- With filter:
+'{"query": "...", "columns": [...], "filter": {"@eq": {"column": "value"}}, "limit": 10}'
 
 */

@@ -26,28 +26,28 @@ USE ROLE ACCOUNTADMIN;
 -- 1. CREATE DATABASE AND SCHEMAS
 --------------------------------------------------------------------------------
 
-CREATE DATABASE IF NOT EXISTS AGENT_AUDIT
+CREATE OR REPLACE DATABASE AGENT_AUDIT
     COMMENT = 'Database for AI agent auditing and observability';
 
 USE DATABASE AGENT_AUDIT;
 
 -- Schema for observability views and data
-CREATE SCHEMA IF NOT EXISTS OBSERVABILITY
+CREATE OR REPLACE SCHEMA OBSERVABILITY
     COMMENT = 'Views and tables for agent observability data';
 
 -- Schema for reference data (policies, guidelines)
-CREATE SCHEMA IF NOT EXISTS REFERENCE
+CREATE OR REPLACE SCHEMA REFERENCE
     COMMENT = 'Reference data for compliance and policies';
 
 -- Schema for Cortex services
-CREATE SCHEMA IF NOT EXISTS CORTEX
+CREATE OR REPLACE SCHEMA CORTEX
     COMMENT = 'Cortex Analyst and Search services for auditing';
 
 --------------------------------------------------------------------------------
 -- 2. CREATE WAREHOUSE
 --------------------------------------------------------------------------------
 
-CREATE WAREHOUSE IF NOT EXISTS AUDIT_WH
+CREATE OR REPLACE WAREHOUSE AUDIT_WH
     WAREHOUSE_SIZE = 'XSMALL'
     AUTO_SUSPEND = 60
     AUTO_RESUME = TRUE
@@ -58,11 +58,11 @@ CREATE WAREHOUSE IF NOT EXISTS AUDIT_WH
 --------------------------------------------------------------------------------
 
 -- Role for users who can view audit data
-CREATE ROLE IF NOT EXISTS AGENT_AUDIT_VIEWER
+CREATE OR REPLACE ROLE AGENT_AUDIT_VIEWER
     COMMENT = 'Can view agent audit data and run queries';
 
 -- Role for users who can manage audit infrastructure
-CREATE ROLE IF NOT EXISTS AGENT_AUDIT_ADMIN
+CREATE OR REPLACE ROLE AGENT_AUDIT_ADMIN
     COMMENT = 'Can manage audit infrastructure and delete data';
 
 -- Role hierarchy
@@ -129,7 +129,7 @@ GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE AGENT_AUDIT_VIEWER;
 USE SCHEMA REFERENCE;
 
 -- Table for compliance policies (populate with your policies)
-CREATE TABLE IF NOT EXISTS COMPLIANCE_POLICIES (
+CREATE OR REPLACE TABLE COMPLIANCE_POLICIES (
     policy_id VARCHAR(50) PRIMARY KEY,
     policy_name VARCHAR(200) NOT NULL,
     policy_category VARCHAR(100),
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS COMPLIANCE_POLICIES (
 COMMENT = 'Compliance policies for agent behavior auditing';
 
 -- Table for audit notes (investigators can log findings)
-CREATE TABLE IF NOT EXISTS AUDIT_NOTES (
+CREATE OR REPLACE TABLE AUDIT_NOTES (
     note_id VARCHAR(50) DEFAULT UUID_STRING() PRIMARY KEY,
     investigation_id VARCHAR(100),
     agent_name VARCHAR(200),

@@ -10,7 +10,23 @@ for your audit investigations.
 Prerequisites:
 - Run scripts 00, 01 first
 - Have some agent activity in AI_OBSERVABILITY_EVENTS
+- Have some Cortex Analyst activity in CORTEX_ANALYST_REQUESTS_RAW
 
+================================================================================
+SECTIONS:
+  A - Agent Activity Overview
+  B - User Feedback Analysis
+  C - Security Analysis
+  D - Data Access Lineage
+  E - User Behavior Analysis
+  F - Cortex Function Usage
+  F2 - Cortex Analyst Overview
+  F3 - Cortex Analyst Performance
+  F4 - Verified Query Analysis
+  F5 - Cortex Search Usage (within Analyst)
+  F6 - Agent + Analyst Correlation
+  G - Compliance Reporting
+  H - Investigation Templates
 ================================================================================
 */
 
@@ -281,10 +297,283 @@ GROUP BY DATE(start_time), CORTEX_FUNCTION_USED
 ORDER BY usage_date DESC, calls DESC;
 
 --------------------------------------------------------------------------------
+-- SECTION F2: CORTEX ANALYST OVERVIEW
+--------------------------------------------------------------------------------
+
+-- F2.1. Cortex Analyst usage by semantic model (last 30 days)
+SELECT 
+    SEMANTIC_MODEL_PATH,
+    COUNT(*) as total_requests,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    SUM(CASE WHEN REQUEST_STATUS = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms,
+    SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) as verified_query_hits
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY SEMANTIC_MODEL_PATH
+ORDER BY total_requests DESC;
+
+-- F2.2. Daily Cortex Analyst request volume
+SELECT 
+    REQUEST_DATE,
+    COUNT(*) as total_requests,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    COUNT(DISTINCT SEMANTIC_MODEL_PATH) as models_used,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms,
+    SUM(CASE WHEN REQUEST_STATUS = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
+    SUM(CASE WHEN REQUEST_STATUS = 'FAILED' THEN 1 ELSE 0 END) as failed
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY REQUEST_DATE
+ORDER BY REQUEST_DATE DESC;
+
+-- F2.3. Top Cortex Analyst users
+SELECT 
+    USER_NAME,
+    ROLE_NAME,
+    COUNT(*) as total_requests,
+    COUNT(DISTINCT SEMANTIC_MODEL_PATH) as models_used,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms,
+    SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) as verified_query_hits,
+    ROUND(SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as verified_hit_rate_pct
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY USER_NAME, ROLE_NAME
+ORDER BY total_requests DESC
+LIMIT 20;
+
+-- F2.4. Recent Cortex Analyst questions (for review)
+SELECT 
+    REQUEST_TIMESTAMP,
+    USER_NAME,
+    SEMANTIC_MODEL_PATH,
+    USER_QUESTION,
+    LEFT(GENERATED_SQL, 300) as sql_preview,
+    RESPONSE_TIME_MS,
+    USED_VERIFIED_QUERY,
+    QUESTION_CATEGORY
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
+ORDER BY REQUEST_TIMESTAMP DESC
+LIMIT 50;
+
+--------------------------------------------------------------------------------
+-- SECTION F3: CORTEX ANALYST PERFORMANCE
+--------------------------------------------------------------------------------
+
+-- F3.1. Response time percentiles by semantic model
+SELECT 
+    SEMANTIC_MODEL_PATH,
+    COUNT(*) as request_count,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_ms,
+    ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY RESPONSE_TIME_MS), 0) as p50_ms,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY RESPONSE_TIME_MS), 0) as p90_ms,
+    ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY RESPONSE_TIME_MS), 0) as p99_ms,
+    MAX(RESPONSE_TIME_MS) as max_ms
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+  AND REQUEST_STATUS = 'SUCCESS'
+GROUP BY SEMANTIC_MODEL_PATH
+ORDER BY avg_ms DESC;
+
+-- F3.2. Hourly performance trends (identify peak times)
+SELECT 
+    REQUEST_HOUR,
+    COUNT(*) as request_count,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms,
+    ROUND(SUM(CASE WHEN REQUEST_STATUS = 'SUCCESS' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as success_rate_pct
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
+GROUP BY REQUEST_HOUR
+ORDER BY REQUEST_HOUR;
+
+-- F3.3. Slow queries investigation (>10 seconds)
+SELECT 
+    REQUEST_TIMESTAMP,
+    USER_NAME,
+    SEMANTIC_MODEL_PATH,
+    USER_QUESTION,
+    RESPONSE_TIME_MS,
+    SQL_LENGTH,
+    TABLE_COUNT as tables_referenced,
+    QUESTION_CATEGORY,
+    LLM_MODEL_USED
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE RESPONSE_TIME_MS > 10000  -- 10 seconds
+  AND REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
+ORDER BY RESPONSE_TIME_MS DESC
+LIMIT 20;
+
+-- F3.4. Question category distribution
+SELECT 
+    QUESTION_CATEGORY,
+    COUNT(*) as request_count,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms,
+    ROUND(SUM(CASE WHEN REQUEST_STATUS = 'SUCCESS' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as success_rate_pct
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+  AND QUESTION_CATEGORY IS NOT NULL
+GROUP BY QUESTION_CATEGORY
+ORDER BY request_count DESC;
+
+-- F3.5. LLM model usage
+SELECT 
+    LLM_MODEL_USED,
+    COUNT(*) as request_count,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+  AND LLM_MODEL_USED IS NOT NULL
+GROUP BY LLM_MODEL_USED
+ORDER BY request_count DESC;
+
+--------------------------------------------------------------------------------
+-- SECTION F4: VERIFIED QUERY ANALYSIS
+--------------------------------------------------------------------------------
+
+-- F4.1. Most frequently matched verified queries
+SELECT 
+    SEMANTIC_MODEL_PATH,
+    VERIFIED_QUERY_NAME,
+    VERIFIED_QUERY_BY,
+    COUNT(*) as times_matched,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE USED_VERIFIED_QUERY = TRUE
+  AND REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY SEMANTIC_MODEL_PATH, VERIFIED_QUERY_NAME, VERIFIED_QUERY_BY
+ORDER BY times_matched DESC;
+
+-- F4.2. Verified query hit rate trend
+SELECT 
+    REQUEST_DATE,
+    SEMANTIC_MODEL_PATH,
+    COUNT(*) as total_requests,
+    SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) as verified_hits,
+    ROUND(SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as hit_rate_pct
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -14, CURRENT_DATE())
+GROUP BY REQUEST_DATE, SEMANTIC_MODEL_PATH
+ORDER BY REQUEST_DATE DESC, total_requests DESC;
+
+-- F4.3. Questions that could become verified queries (frequent similar questions)
+SELECT 
+    SEMANTIC_MODEL_PATH,
+    USER_QUESTION,
+    COUNT(*) as times_asked,
+    COUNT(DISTINCT USER_NAME) as unique_askers,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE USED_VERIFIED_QUERY = FALSE  -- Not already matching a verified query
+  AND REQUEST_STATUS = 'SUCCESS'
+  AND REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY SEMANTIC_MODEL_PATH, USER_QUESTION
+HAVING times_asked >= 3  -- Asked multiple times
+ORDER BY times_asked DESC
+LIMIT 20;
+
+-- F4.4. Verified queries by creator
+SELECT 
+    VERIFIED_QUERY_BY as created_by,
+    COUNT(DISTINCT VERIFIED_QUERY_NAME) as verified_queries_created,
+    SUM(COUNT(*)) OVER (PARTITION BY VERIFIED_QUERY_BY) as total_matches
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE USED_VERIFIED_QUERY = TRUE
+  AND REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+GROUP BY VERIFIED_QUERY_BY, VERIFIED_QUERY_NAME
+ORDER BY total_matches DESC;
+
+--------------------------------------------------------------------------------
+-- SECTION F5: CORTEX SEARCH USAGE WITHIN ANALYST
+--------------------------------------------------------------------------------
+
+-- F5.1. Cortex Search services called by Cortex Analyst
+SELECT 
+    SEARCH_SERVICE,
+    COUNT(*) as call_count,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    ROUND(AVG(RESULTS_RETURNED), 1) as avg_results_returned
+FROM CORTEX_ANALYST_SEARCH_USAGE
+WHERE REQUEST_TIMESTAMP >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY SEARCH_SERVICE
+ORDER BY call_count DESC;
+
+-- F5.2. Search retrieval patterns
+SELECT 
+    REQUEST_TIMESTAMP,
+    USER_NAME,
+    USER_QUESTION,
+    SEARCH_SERVICE,
+    SEARCH_QUERY,
+    RESULTS_RETURNED
+FROM CORTEX_ANALYST_SEARCH_USAGE
+WHERE REQUEST_TIMESTAMP >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+ORDER BY REQUEST_TIMESTAMP DESC
+LIMIT 50;
+
+-- F5.3. Questions that triggered Cortex Search
+SELECT 
+    USER_QUESTION,
+    COUNT(*) as times_triggered_search,
+    COUNT(DISTINCT SEARCH_SERVICE) as search_services_used,
+    SUM(RESULTS_RETURNED) as total_results_retrieved
+FROM CORTEX_ANALYST_SEARCH_USAGE
+WHERE REQUEST_TIMESTAMP >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY USER_QUESTION
+ORDER BY times_triggered_search DESC
+LIMIT 20;
+
+--------------------------------------------------------------------------------
+-- SECTION F6: AGENT + ANALYST CORRELATION
+--------------------------------------------------------------------------------
+
+-- F6.1. Agents using Cortex Analyst as a tool
+SELECT 
+    AGENT_NAME,
+    AGENT_DATABASE || '.' || AGENT_SCHEMA as agent_location,
+    COUNT(*) as analyst_calls,
+    COUNT(DISTINCT ANALYST_USER) as unique_users,
+    COUNT(DISTINCT SEMANTIC_MODEL_PATH) as semantic_models_used,
+    ROUND(AVG(ANALYST_RESPONSE_MS), 0) as avg_analyst_response_ms
+FROM AGENT_ANALYST_CORRELATION
+WHERE AGENT_EVENT_TIME >= DATEADD('day', -30, CURRENT_TIMESTAMP())
+GROUP BY AGENT_NAME, AGENT_DATABASE, AGENT_SCHEMA
+ORDER BY analyst_calls DESC;
+
+-- F6.2. Agent conversations that used Cortex Analyst
+SELECT 
+    AGENT_EVENT_TIME,
+    AGENT_NAME,
+    AGENT_USER,
+    SEMANTIC_MODEL_PATH,
+    ANALYST_QUESTION,
+    GENERATED_SQL_PREVIEW,
+    ANALYST_RESPONSE_MS,
+    USED_VERIFIED_QUERY,
+    VERIFIED_QUERY_NAME
+FROM AGENT_ANALYST_CORRELATION
+WHERE AGENT_EVENT_TIME >= DATEADD('day', -7, CURRENT_TIMESTAMP())
+ORDER BY AGENT_EVENT_TIME DESC
+LIMIT 30;
+
+-- F6.3. Agent tool patterns - how often do agents use Analyst vs other tools?
+SELECT 
+    ae.AGENT_NAME,
+    ae.SPAN_NAME as tool_or_span,
+    COUNT(*) as usage_count,
+    ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY ae.AGENT_NAME), 1) as pct_of_agent_activity
+FROM AGENT_EVENTS_FLATTENED ae
+WHERE ae.EVENT_DATE >= DATEADD('day', -30, CURRENT_DATE())
+  AND ae.SPAN_NAME IS NOT NULL
+GROUP BY ae.AGENT_NAME, ae.SPAN_NAME
+ORDER BY ae.AGENT_NAME, usage_count DESC;
+
+--------------------------------------------------------------------------------
 -- SECTION G: COMPLIANCE REPORTING QUERIES
 --------------------------------------------------------------------------------
 
--- G1. Monthly audit summary
+-- G1. Monthly audit summary - Cortex Agents
 SELECT 
     DATE_TRUNC('month', EVENT_DATE) as audit_month,
     AGENT_NAME,
@@ -297,7 +586,21 @@ WHERE EVENT_DATE >= DATEADD('month', -3, CURRENT_DATE())
 GROUP BY DATE_TRUNC('month', EVENT_DATE), AGENT_NAME
 ORDER BY audit_month DESC, AGENT_NAME;
 
--- G2. Data access report for compliance
+-- G2. Monthly audit summary - Cortex Analyst
+SELECT 
+    DATE_TRUNC('month', REQUEST_DATE) as audit_month,
+    SEMANTIC_MODEL_PATH,
+    COUNT(*) as total_requests,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    SUM(CASE WHEN REQUEST_STATUS = 'SUCCESS' THEN 1 ELSE 0 END) as successful_requests,
+    SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) as verified_query_hits,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_response_ms
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('month', -3, CURRENT_DATE())
+GROUP BY DATE_TRUNC('month', REQUEST_DATE), SEMANTIC_MODEL_PATH
+ORDER BY audit_month DESC, total_requests DESC;
+
+-- G3. Data access report for compliance
 SELECT 
     DATE_TRUNC('week', access_time) as report_week,
     COUNT(DISTINCT user_name) as users_with_access,
@@ -308,6 +611,45 @@ FROM DATA_ACCESS_LINEAGE
 WHERE access_time >= DATEADD('month', -1, CURRENT_TIMESTAMP())
 GROUP BY DATE_TRUNC('week', access_time)
 ORDER BY report_week DESC;
+
+-- G4. Cortex Analyst tables accessed via generated SQL
+SELECT 
+    DATE_TRUNC('week', REQUEST_DATE) as report_week,
+    SEMANTIC_MODEL_PATH,
+    f.value::STRING as table_referenced,
+    COUNT(*) as times_referenced,
+    COUNT(DISTINCT USER_NAME) as unique_users
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED,
+LATERAL FLATTEN(input => TABLES_REFERENCED, OUTER => TRUE) f
+WHERE REQUEST_DATE >= DATEADD('month', -1, CURRENT_DATE())
+  AND f.value IS NOT NULL
+GROUP BY DATE_TRUNC('week', REQUEST_DATE), SEMANTIC_MODEL_PATH, f.value::STRING
+ORDER BY report_week DESC, times_referenced DESC;
+
+-- G5. Combined AI usage report (Agents + Analyst)
+SELECT 
+    DATE_TRUNC('week', event_date) as report_week,
+    'CORTEX_AGENT' as ai_service,
+    COUNT(DISTINCT AGENT_NAME) as unique_objects,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    COUNT(*) as total_events
+FROM AGENT_EVENTS_FLATTENED
+WHERE EVENT_DATE >= DATEADD('month', -1, CURRENT_DATE())
+GROUP BY DATE_TRUNC('week', event_date)
+
+UNION ALL
+
+SELECT 
+    DATE_TRUNC('week', REQUEST_DATE) as report_week,
+    'CORTEX_ANALYST' as ai_service,
+    COUNT(DISTINCT SEMANTIC_MODEL_PATH) as unique_objects,
+    COUNT(DISTINCT USER_NAME) as unique_users,
+    COUNT(*) as total_events
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('month', -1, CURRENT_DATE())
+GROUP BY DATE_TRUNC('week', REQUEST_DATE)
+
+ORDER BY report_week DESC, ai_service;
 
 --------------------------------------------------------------------------------
 -- SECTION H: INVESTIGATION TEMPLATES
@@ -350,6 +692,78 @@ SELECT
 FROM AGENT_EVENTS_FLATTENED
 WHERE THREAD_ID = 'YOUR_THREAD_ID'
 ORDER BY EVENT_TIMESTAMP;
+*/
+
+-- H3. Investigate a specific semantic model's usage
+-- Replace with your semantic model path
+/*
+SELECT 
+    REQUEST_DATE,
+    COUNT(*) as requests,
+    COUNT(DISTINCT USER_NAME) as users,
+    ROUND(AVG(RESPONSE_TIME_MS), 0) as avg_ms,
+    SUM(CASE WHEN USED_VERIFIED_QUERY THEN 1 ELSE 0 END) as verified_hits
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE SEMANTIC_MODEL_PATH ILIKE '%your_model%'
+GROUP BY REQUEST_DATE
+ORDER BY REQUEST_DATE DESC;
+*/
+
+-- H4. Investigate Cortex Analyst questions by a specific user
+/*
+SELECT 
+    REQUEST_TIMESTAMP,
+    USER_QUESTION,
+    SEMANTIC_MODEL_PATH,
+    LEFT(GENERATED_SQL, 500) as sql_preview,
+    RESPONSE_TIME_MS,
+    REQUEST_STATUS,
+    USED_VERIFIED_QUERY
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE USER_NAME = 'TARGET_USER'
+  AND REQUEST_DATE >= DATEADD('day', -30, CURRENT_DATE())
+ORDER BY REQUEST_TIMESTAMP DESC;
+*/
+
+-- H5. Find all questions about a specific topic/table
+/*
+SELECT 
+    REQUEST_TIMESTAMP,
+    USER_NAME,
+    USER_QUESTION,
+    LEFT(GENERATED_SQL, 300) as sql_preview,
+    RESPONSE_TIME_MS
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE USER_QUESTION ILIKE '%customer%'  -- Adjust search term
+   OR GENERATED_SQL ILIKE '%CUSTOMER%'
+ORDER BY REQUEST_TIMESTAMP DESC
+LIMIT 50;
+*/
+
+-- H6. Analyze generated SQL patterns (for security review)
+/*
+SELECT 
+    USER_NAME,
+    USER_QUESTION,
+    GENERATED_SQL,
+    CASE 
+        WHEN GENERATED_SQL ILIKE '%DELETE%' THEN 'CONTAINS_DELETE'
+        WHEN GENERATED_SQL ILIKE '%DROP%' THEN 'CONTAINS_DROP'
+        WHEN GENERATED_SQL ILIKE '%TRUNCATE%' THEN 'CONTAINS_TRUNCATE'
+        WHEN GENERATED_SQL ILIKE '%INSERT%' THEN 'CONTAINS_INSERT'
+        WHEN GENERATED_SQL ILIKE '%UPDATE%' THEN 'CONTAINS_UPDATE'
+        ELSE 'READ_ONLY'
+    END as sql_type
+FROM CORTEX_ANALYST_REQUESTS_FLATTENED
+WHERE REQUEST_DATE >= DATEADD('day', -7, CURRENT_DATE())
+  AND (
+      GENERATED_SQL ILIKE '%DELETE%'
+      OR GENERATED_SQL ILIKE '%DROP%'
+      OR GENERATED_SQL ILIKE '%TRUNCATE%'
+      OR GENERATED_SQL ILIKE '%INSERT%'
+      OR GENERATED_SQL ILIKE '%UPDATE%'
+  )
+ORDER BY REQUEST_TIMESTAMP DESC;
 */
 
 --------------------------------------------------------------------------------
