@@ -44,10 +44,17 @@ SELECT
     -- Scope info
     SCOPE:"name"::STRING as SCOPE_NAME,
     
-    -- Input/Output if available (from RECORD_ATTRIBUTES)
+    -- Input/Output content (from RECORD_ATTRIBUTES)
     RECORD_ATTRIBUTES:"ai.observability.input_id"::STRING as INPUT_ID,
-    RECORD_ATTRIBUTES:"input"::STRING as SPAN_INPUT,
-    RECORD_ATTRIBUTES:"output"::STRING as SPAN_OUTPUT,
+    COALESCE(
+        RECORD_ATTRIBUTES:"ai.observability.record_root.input"::STRING,
+        RECORD_ATTRIBUTES:"snow.ai.observability.record_root.input"::STRING
+    ) as SPAN_INPUT,
+    COALESCE(
+        RECORD_ATTRIBUTES:"ai.observability.record_root.output"::STRING,
+        RECORD_ATTRIBUTES:"snow.ai.observability.record_root.output"::STRING,
+        RECORD_ATTRIBUTES:"snow.ai.observability.agent.response"::STRING
+    ) as SPAN_OUTPUT,
     
     -- Feedback fields (if present in RECORD_ATTRIBUTES)
     RECORD_ATTRIBUTES:"feedback":"positive"::BOOLEAN as FEEDBACK_POSITIVE,

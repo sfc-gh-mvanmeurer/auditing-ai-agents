@@ -29,8 +29,13 @@ GRANT ALL ON ALL TABLES IN SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_AD
 -- STEP 1: SOURCE VIEW
 --------------------------------------------------------------------------------
 
--- Source view pulls from AGENT_EVENTS_FLATTENED for conversation data
--- Extracts input/output pairs where both are present for evaluation
+--------------------------------------------------------------------------------
+-- Source view for LLM-as-a-Judge evaluation
+--------------------------------------------------------------------------------
+-- Uses the flattened view which now extracts input/output from correct paths:
+--   ai.observability.record_root.input / snow.ai.observability.record_root.input
+--   ai.observability.record_root.output / snow.ai.observability.agent.response
+
 CREATE OR REPLACE VIEW AGENT_AUDIT.EVALUATIONS.EVALUATION_SOURCE AS
 SELECT
     THREAD_ID,
