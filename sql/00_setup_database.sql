@@ -28,6 +28,10 @@ CREATE OR REPLACE SCHEMA REFERENCE
 CREATE OR REPLACE SCHEMA CORTEX
     COMMENT = 'Cortex Analyst and Search services for auditing';
 
+-- Schema for LLM-as-a-Judge evaluations
+CREATE OR REPLACE SCHEMA EVALUATIONS
+    COMMENT = 'LLM-as-a-judge evaluation pipeline for agent quality assessment';
+
 --------------------------------------------------------------------------------
 -- 2. CREATE WAREHOUSE
 --------------------------------------------------------------------------------

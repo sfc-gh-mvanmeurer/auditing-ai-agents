@@ -4,31 +4,52 @@ Systematic evaluation of agent responses for quality, safety, and compliance.
 Requires: Run 00, 01 first; CORTEX.COMPLETE access
 */
 
-USE DATABASE AUDIT_DB;
-USE SCHEMA OBSERVABILITY;
+USE ROLE AGENT_AUDIT_ADMIN;
+USE DATABASE AGENT_AUDIT;
 USE WAREHOUSE AUDIT_WH;
 
--- STEP 1: Source view for conversations (adapt to your event structure)
-CREATE OR REPLACE VIEW AGENT_CONVERSATIONS AS
+--------------------------------------------------------------------------------
+-- CREATE EVALUATIONS SCHEMA
+--------------------------------------------------------------------------------
+
+CREATE OR REPLACE SCHEMA EVALUATIONS
+    COMMENT = 'LLM-as-a-judge evaluation pipeline for agent quality assessment';
+
+USE SCHEMA EVALUATIONS;
+
+-- Grant access to roles
+GRANT USAGE ON SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_VIEWER;
+GRANT USAGE ON SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_ADMIN;
+GRANT SELECT ON ALL VIEWS IN SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_VIEWER;
+GRANT SELECT ON ALL TABLES IN SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_VIEWER;
+GRANT ALL ON ALL VIEWS IN SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_ADMIN;
+GRANT ALL ON ALL TABLES IN SCHEMA AGENT_AUDIT.EVALUATIONS TO ROLE AGENT_AUDIT_ADMIN;
+
+--------------------------------------------------------------------------------
+-- STEP 1: SOURCE VIEW
+--------------------------------------------------------------------------------
+
+-- Source view references the OBSERVABILITY schema conversations view
+-- This view adapts the data for evaluation purposes
+CREATE OR REPLACE VIEW AGENT_AUDIT.EVALUATIONS.EVALUATION_SOURCE AS
 SELECT
-    RECORD:thread_id::STRING as THREAD_ID,
-    RECORD:user_name::STRING as USER_NAME,
-    RECORD:agent_name::STRING as AGENT_NAME,
-    -- Extract user query from the input
-    RECORD:spans[0]:input::STRING as USER_QUERY,
-    -- Extract agent response from the output
-    RECORD:spans[0]:output::STRING as AGENT_RESPONSE,
-    RECORD:spans[0]:tool_name::STRING as TOOL_USED,
-    DATE(TIMESTAMP) as EVENT_DATE,
-    TIMESTAMP as EVENT_TIMESTAMP
-FROM SNOWFLAKE.LOCAL.AI_OBSERVABILITY_EVENTS
-WHERE RECORD:agent_type = 'CORTEX AGENT'
-  AND RECORD:name = 'RESPONSE';
+    THREAD_ID,
+    USER_NAME,
+    AGENT_NAME,
+    USER_QUERY,
+    AGENT_RESPONSE,
+    SPAN_NAME as TOOL_USED,
+    EVENT_DATE,
+    EVENT_TIMESTAMP
+FROM AGENT_AUDIT.OBSERVABILITY.AGENT_CONVERSATIONS
+WHERE AGENT_RESPONSE IS NOT NULL;
 
 
--- STEP 2: Evaluation dataset (sampled for cost control)
+--------------------------------------------------------------------------------
+-- STEP 2: EVALUATION DATASET (sampled for cost control)
+--------------------------------------------------------------------------------
 
-CREATE OR REPLACE TABLE EVALUATION_DATASET AS
+CREATE OR REPLACE TABLE AGENT_AUDIT.EVALUATIONS.EVALUATION_DATASET AS
 SELECT 
     THREAD_ID,
     USER_NAME,
@@ -38,16 +59,16 @@ SELECT
     TOOL_USED,
     EVENT_DATE,
     EVENT_TIMESTAMP
-FROM AGENT_CONVERSATIONS
+FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_SOURCE
 WHERE EVENT_DATE >= DATEADD('day', -7, CURRENT_DATE())
-  AND AGENT_RESPONSE IS NOT NULL
   AND LENGTH(AGENT_RESPONSE) > 50
   AND LENGTH(USER_QUERY) > 10
 SAMPLE (100 ROWS);  -- Adjust sample size based on budget
 
-
--- STEP 3: LLM Judge Functions
-CREATE OR REPLACE FUNCTION JUDGE_GROUNDEDNESS(
+--------------------------------------------------------------------------------
+-- STEP 3: LLM JUDGE FUNCTIONS
+--------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION AGENT_AUDIT.EVALUATIONS.JUDGE_GROUNDEDNESS(
     user_query VARCHAR,
     agent_response VARCHAR
 )
@@ -79,7 +100,7 @@ $$;
 
 
 -- Relevance Judge
-CREATE OR REPLACE FUNCTION JUDGE_RELEVANCE(
+CREATE OR REPLACE FUNCTION AGENT_AUDIT.EVALUATIONS.JUDGE_RELEVANCE(
     user_query VARCHAR,
     agent_response VARCHAR
 )
@@ -111,7 +132,7 @@ $$;
 
 
 -- Safety Judge
-CREATE OR REPLACE FUNCTION JUDGE_SAFETY(
+CREATE OR REPLACE FUNCTION AGENT_AUDIT.EVALUATIONS.JUDGE_SAFETY(
     user_query VARCHAR,
     agent_response VARCHAR
 )
@@ -150,7 +171,7 @@ $$;
 
 
 -- Comprehensiveness Judge
-CREATE OR REPLACE FUNCTION JUDGE_COMPREHENSIVENESS(
+CREATE OR REPLACE FUNCTION AGENT_AUDIT.EVALUATIONS.JUDGE_COMPREHENSIVENESS(
     user_query VARCHAR,
     agent_response VARCHAR
 )
@@ -181,9 +202,11 @@ Respond ONLY in this exact JSON format:
 $$;
 
 
--- STEP 4: Run Evaluations (100 samples × 4 judges = 400 LLM calls)
+--------------------------------------------------------------------------------
+-- STEP 4: RUN EVALUATIONS (100 samples × 4 judges = 400 LLM calls)
+--------------------------------------------------------------------------------
 
-CREATE OR REPLACE TABLE EVALUATION_RESULTS AS
+CREATE OR REPLACE TABLE AGENT_AUDIT.EVALUATIONS.EVALUATION_RESULTS AS
 SELECT 
     e.THREAD_ID,
     e.USER_NAME,
@@ -194,19 +217,21 @@ SELECT
     e.EVENT_TIMESTAMP,
     
     -- Run each judge (these execute in parallel within the query)
-    JUDGE_GROUNDEDNESS(e.USER_QUERY, e.AGENT_RESPONSE) as GROUNDEDNESS_RAW,
-    JUDGE_RELEVANCE(e.USER_QUERY, e.AGENT_RESPONSE) as RELEVANCE_RAW,
-    JUDGE_SAFETY(e.USER_QUERY, e.AGENT_RESPONSE) as SAFETY_RAW,
-    JUDGE_COMPREHENSIVENESS(e.USER_QUERY, e.AGENT_RESPONSE) as COMPREHENSIVENESS_RAW,
+    AGENT_AUDIT.EVALUATIONS.JUDGE_GROUNDEDNESS(e.USER_QUERY, e.AGENT_RESPONSE) as GROUNDEDNESS_RAW,
+    AGENT_AUDIT.EVALUATIONS.JUDGE_RELEVANCE(e.USER_QUERY, e.AGENT_RESPONSE) as RELEVANCE_RAW,
+    AGENT_AUDIT.EVALUATIONS.JUDGE_SAFETY(e.USER_QUERY, e.AGENT_RESPONSE) as SAFETY_RAW,
+    AGENT_AUDIT.EVALUATIONS.JUDGE_COMPREHENSIVENESS(e.USER_QUERY, e.AGENT_RESPONSE) as COMPREHENSIVENESS_RAW,
     
     CURRENT_TIMESTAMP() as EVALUATED_AT
     
-FROM EVALUATION_DATASET e;
+FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_DATASET e;
 
 
--- STEP 5: Parse Results
+--------------------------------------------------------------------------------
+-- STEP 5: PARSE RESULTS
+--------------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW EVALUATION_PARSED AS
+CREATE OR REPLACE VIEW AGENT_AUDIT.EVALUATIONS.EVALUATION_PARSED AS
 SELECT 
     THREAD_ID,
     USER_NAME,
@@ -255,10 +280,14 @@ SELECT
         ELSE 'REVIEW'
     END as EVALUATION_STATUS
 
-FROM EVALUATION_RESULTS;
+FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_RESULTS;
 
 
--- STEP 6: Analysis Queries
+--------------------------------------------------------------------------------
+-- STEP 6: ANALYSIS QUERIES
+--------------------------------------------------------------------------------
+
+-- Overall evaluation summary
 SELECT 
     COUNT(*) as TOTAL_EVALUATED,
     
@@ -277,7 +306,7 @@ SELECT
     -- Pass rate
     ROUND(SUM(CASE WHEN EVALUATION_STATUS = 'PASS' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as PASS_RATE_PCT
     
-FROM EVALUATION_PARSED;
+FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_PARSED;
 
 
 -- Breakdown by agent
@@ -333,47 +362,54 @@ GROUP BY 1
 ORDER BY 1 DESC;
 
 
--- STEP 7: Scheduled Task (weekly evaluation)
-CREATE OR REPLACE TASK WEEKLY_AGENT_EVALUATION
+--------------------------------------------------------------------------------
+-- STEP 7: SCHEDULED TASK (weekly evaluation)
+--------------------------------------------------------------------------------
+
+CREATE OR REPLACE TASK AGENT_AUDIT.EVALUATIONS.WEEKLY_AGENT_EVALUATION
     WAREHOUSE = AUDIT_WH
     SCHEDULE = 'USING CRON 0 2 * * 0 America/New_York'
     COMMENT = 'Weekly LLM-as-a-judge evaluation of agent responses'
 AS
 BEGIN
     -- Archive previous results
-    CREATE TABLE IF NOT EXISTS EVALUATION_HISTORY (LIKE EVALUATION_RESULTS);
-    INSERT INTO EVALUATION_HISTORY SELECT * FROM EVALUATION_RESULTS;
+    CREATE TABLE IF NOT EXISTS AGENT_AUDIT.EVALUATIONS.EVALUATION_HISTORY 
+        (LIKE AGENT_AUDIT.EVALUATIONS.EVALUATION_RESULTS);
+    INSERT INTO AGENT_AUDIT.EVALUATIONS.EVALUATION_HISTORY 
+        SELECT * FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_RESULTS;
     
     -- Refresh evaluation dataset (last 7 days, sampled)
-    CREATE OR REPLACE TABLE EVALUATION_DATASET AS
-    SELECT * FROM AGENT_CONVERSATIONS
+    CREATE OR REPLACE TABLE AGENT_AUDIT.EVALUATIONS.EVALUATION_DATASET AS
+    SELECT * FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_SOURCE
     WHERE EVENT_DATE >= DATEADD('day', -7, CURRENT_DATE())
-      AND AGENT_RESPONSE IS NOT NULL
       AND LENGTH(AGENT_RESPONSE) > 50
     SAMPLE (100 ROWS);
     
     -- Run evaluations
-    CREATE OR REPLACE TABLE EVALUATION_RESULTS AS
+    CREATE OR REPLACE TABLE AGENT_AUDIT.EVALUATIONS.EVALUATION_RESULTS AS
     SELECT 
         e.*,
-        JUDGE_GROUNDEDNESS(e.USER_QUERY, e.AGENT_RESPONSE) as GROUNDEDNESS_RAW,
-        JUDGE_RELEVANCE(e.USER_QUERY, e.AGENT_RESPONSE) as RELEVANCE_RAW,
-        JUDGE_SAFETY(e.USER_QUERY, e.AGENT_RESPONSE) as SAFETY_RAW,
-        JUDGE_COMPREHENSIVENESS(e.USER_QUERY, e.AGENT_RESPONSE) as COMPREHENSIVENESS_RAW,
+        AGENT_AUDIT.EVALUATIONS.JUDGE_GROUNDEDNESS(e.USER_QUERY, e.AGENT_RESPONSE) as GROUNDEDNESS_RAW,
+        AGENT_AUDIT.EVALUATIONS.JUDGE_RELEVANCE(e.USER_QUERY, e.AGENT_RESPONSE) as RELEVANCE_RAW,
+        AGENT_AUDIT.EVALUATIONS.JUDGE_SAFETY(e.USER_QUERY, e.AGENT_RESPONSE) as SAFETY_RAW,
+        AGENT_AUDIT.EVALUATIONS.JUDGE_COMPREHENSIVENESS(e.USER_QUERY, e.AGENT_RESPONSE) as COMPREHENSIVENESS_RAW,
         CURRENT_TIMESTAMP() as EVALUATED_AT
-    FROM EVALUATION_DATASET e;
+    FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_DATASET e;
 END;
 
 -- Enable the task (uncomment when ready)
--- ALTER TASK WEEKLY_AGENT_EVALUATION RESUME;
+-- ALTER TASK AGENT_AUDIT.EVALUATIONS.WEEKLY_AGENT_EVALUATION RESUME;
 
 
--- STEP 8: Alert for Critical Issues
-CREATE OR REPLACE ALERT CRITICAL_SAFETY_ALERT
+--------------------------------------------------------------------------------
+-- STEP 8: ALERT FOR CRITICAL ISSUES
+--------------------------------------------------------------------------------
+
+CREATE OR REPLACE ALERT AGENT_AUDIT.EVALUATIONS.CRITICAL_SAFETY_ALERT
     WAREHOUSE = AUDIT_WH
     SCHEDULE = '60 MINUTE'
     IF (EXISTS (
-        SELECT 1 FROM EVALUATION_PARSED 
+        SELECT 1 FROM AGENT_AUDIT.EVALUATIONS.EVALUATION_PARSED 
         WHERE EVALUATION_STATUS = 'CRITICAL' 
           AND EVALUATED_AT >= DATEADD('hour', -1, CURRENT_TIMESTAMP())
     ))
@@ -382,16 +418,17 @@ CREATE OR REPLACE ALERT CRITICAL_SAFETY_ALERT
             'audit_alert_integration',
             'security-team@yourcompany.com',
             'CRITICAL: Agent Safety Issue Detected',
-            'One or more agent responses have been flagged as CRITICAL by the LLM-as-a-judge evaluation. Please review immediately in AUDIT_DB.OBSERVABILITY.EVALUATION_PARSED.'
+            'One or more agent responses have been flagged as CRITICAL by the LLM-as-a-judge evaluation. Please review immediately in AGENT_AUDIT.EVALUATIONS.EVALUATION_PARSED.'
         );
 
 -- Enable the alert (uncomment when ready, requires email integration)
--- ALTER ALERT CRITICAL_SAFETY_ALERT RESUME;
+-- ALTER ALERT AGENT_AUDIT.EVALUATIONS.CRITICAL_SAFETY_ALERT RESUME;
 
+--------------------------------------------------------------------------------
+-- VERIFY OBJECTS CREATED
+--------------------------------------------------------------------------------
 
--- Verify objects created
-
-SHOW FUNCTIONS LIKE 'JUDGE%' IN SCHEMA AUDIT_DB.OBSERVABILITY;
-SHOW TABLES LIKE 'EVALUATION%' IN SCHEMA AUDIT_DB.OBSERVABILITY;
-SHOW VIEWS LIKE 'EVALUATION%' IN SCHEMA AUDIT_DB.OBSERVABILITY;
-SHOW TASKS IN SCHEMA AUDIT_DB.OBSERVABILITY;
+SHOW FUNCTIONS LIKE 'JUDGE%' IN SCHEMA AGENT_AUDIT.EVALUATIONS;
+SHOW TABLES LIKE 'EVALUATION%' IN SCHEMA AGENT_AUDIT.EVALUATIONS;
+SHOW VIEWS LIKE 'EVALUATION%' IN SCHEMA AGENT_AUDIT.EVALUATIONS;
+SHOW TASKS IN SCHEMA AGENT_AUDIT.EVALUATIONS;
